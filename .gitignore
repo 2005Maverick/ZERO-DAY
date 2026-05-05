@@ -138,11 +138,11 @@ dist
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 
-# Large media files (use CDN/cloud storage instead)
-*.mp4
-*.mp3
-*.wav
-*.mov
-*.avi
-frontend/public/videos/
-frontend/public/audio/
+# Large media files — kept in repo (override CDN convention)
+# *.mp4
+# *.mp3
+# *.wav
+# *.mov
+# *.avi
+# frontend/public/videos/
+# frontend/public/audio/
