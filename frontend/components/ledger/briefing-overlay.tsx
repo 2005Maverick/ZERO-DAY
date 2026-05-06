@@ -133,22 +133,7 @@ export function BriefingOverlay({
       {/* Mouse-following spotlight — 21st.dev magic cursor */}
       <MouseSpotlight />
 
-      {/* Heavy CRT scanlines — astrodither inspired */}
-      <div style={{
-        position: 'absolute', inset: 0, pointerEvents: 'none', zIndex: 47,
-        opacity: 0.07,
-        backgroundImage: 'repeating-linear-gradient(0deg, transparent 0, transparent 2px, rgba(255,255,255,0.5) 2px, rgba(255,255,255,0.5) 3px)',
-        mixBlendMode: 'overlay',
-      }} />
-
-      {/* Global film grain — heavier than before */}
-      <div style={{
-        position: 'absolute', inset: 0, pointerEvents: 'none', zIndex: 50,
-        opacity: 0.075,
-        mixBlendMode: 'overlay',
-        backgroundImage: `url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='240' height='240'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='1.1' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 1  0 0 0 0 1  0 0 0 0 1  0 0 0 0.95 0'/></filter><rect width='240' height='240' filter='url(%23n)'/></svg>")`,
-        animation: 'briefing-grain-shift 1.2s steps(4) infinite',
-      }} />
+      {/* (Removed heavy CRT scanlines + grain that were degrading the video signal) */}
 
       {/* Slow horizontal scan-line that drifts top-to-bottom */}
       <div className="briefing-scan-bar" style={{
@@ -347,7 +332,7 @@ export function BriefingOverlay({
                   ))}
 
                   {!videoFailed ? (
-                    <motion.video
+                    <video
                       ref={videoRef}
                       src={videoSrc}
                       autoPlay
@@ -358,30 +343,15 @@ export function BriefingOverlay({
                       disablePictureInPicture
                       disableRemotePlayback
                       controlsList="nodownload nofullscreen noremoteplayback noplaybackrate"
-                      animate={{ x: [0, 0.4, -0.4, 0.3, -0.3, 0] }}
-                      transition={{ duration: 0.8, repeat: Infinity, ease: 'easeInOut' }}
                       className="briefing-video"
                       style={{
                         width: '100%', height: '100%',
                         objectFit: 'cover',
-                        filter: 'contrast(1.08) brightness(0.96) saturate(1.12)',
                       }}
                     />
                   ) : (
                     <FallbackBriefing />
                   )}
-
-                  {/* Chromatic aberration edges — astrodither-style */}
-                  <div style={{
-                    position: 'absolute', inset: 0, zIndex: 3, pointerEvents: 'none',
-                    mixBlendMode: 'screen',
-                    background: 'radial-gradient(ellipse 100% 100% at 0% 50%, rgba(255,0,0,0.08) 0%, transparent 30%)',
-                  }} />
-                  <div style={{
-                    position: 'absolute', inset: 0, zIndex: 3, pointerEvents: 'none',
-                    mixBlendMode: 'screen',
-                    background: 'radial-gradient(ellipse 100% 100% at 100% 50%, rgba(0,80,180,0.06) 0%, transparent 30%)',
-                  }} />
 
                   {/* Animated traveling border light — Aceternity magic-card pattern */}
                   <div className="briefing-border-spin" style={{
@@ -418,19 +388,6 @@ export function BriefingOverlay({
                   {/* Cinematic letterbox bars */}
                   <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: '8.5%', background: '#000', pointerEvents: 'none', zIndex: 4 }} />
                   <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: '8.5%', background: '#000', pointerEvents: 'none', zIndex: 4 }} />
-
-                  {/* Inner-frame scanlines on the video itself */}
-                  <div style={{
-                    position: 'absolute', inset: 0, zIndex: 3, pointerEvents: 'none',
-                    opacity: 0.05,
-                    backgroundImage: 'repeating-linear-gradient(0deg, transparent, transparent 2px, #fff 2px, #fff 3px)',
-                  }} />
-
-                  {/* Inner frame red atmospheric tint */}
-                  <div style={{
-                    position: 'absolute', inset: 0, zIndex: 2, pointerEvents: 'none',
-                    background: 'radial-gradient(ellipse 100% 100% at 50% 50%, transparent 60%, rgba(40,0,0,0.35) 100%)',
-                  }} />
 
                   {/* REC indicator top-left */}
                   <div style={{

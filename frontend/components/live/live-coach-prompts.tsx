@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { useLiveSession } from '@/lib/contexts/live-session-context'
+import { useTracer } from '@/lib/behavior/tracer'
 import { Lightbulb, Play, X } from 'lucide-react'
 
 interface Prompt {
@@ -72,6 +73,7 @@ const PROMPTS: Prompt[] = [
 
 export function LiveCoachPrompts() {
   const { state, dispatch } = useLiveSession()
+  const { track } = useTracer()
   const [seenMinutes, setSeenMinutes] = useState<Set<number>>(new Set())
   const [activePrompt, setActivePrompt] = useState<Prompt | null>(null)
   const [skipAll, setSkipAll] = useState(false)
@@ -90,6 +92,7 @@ export function LiveCoachPrompts() {
           return next
         })
         setActivePrompt(p)
+        track('coach_prompt_shown', state.currentMinute, { promptId: p.triggerMinute, title: p.title })
         if (state.status === 'LIVE') dispatch({ type: 'PAUSE' })
         break
       }
@@ -104,6 +107,7 @@ export function LiveCoachPrompts() {
   function handleSkipAll() {
     setSkipAll(true)
     setActivePrompt(null)
+    track('coach_skipped_all', state.currentMinute)
     dispatch({ type: 'RESUME' })
   }
 
@@ -114,6 +118,11 @@ export function LiveCoachPrompts() {
       prompt={activePrompt}
       onContinue={dismiss}
       onSkipAll={handleSkipAll}
+      onAnswered={(picked, correct) =>
+        track('coach_prompt_answered', state.currentMinute, {
+          promptId: activePrompt.triggerMinute, pickedIdx: picked, correct,
+        })
+      }
     />
   )
 }
@@ -122,11 +131,18 @@ interface ModalProps {
   prompt: Prompt
   onContinue: () => void
   onSkipAll: () => void
+  onAnswered?: (pickedIdx: number, correct: boolean) => void
 }
 
-function PromptModal({ prompt, onContinue, onSkipAll }: ModalProps) {
+function PromptModal({ prompt, onContinue, onSkipAll, onAnswered }: ModalProps) {
   const [picked, setPicked] = useState<number | null>(null)
   const chosen = picked !== null ? prompt.options[picked] : null
+
+  function pick(i: number) {
+    if (picked !== null) return
+    setPicked(i)
+    onAnswered?.(i, prompt.options[i].correct)
+  }
 
   return (
     <div style={{
@@ -218,7 +234,7 @@ function PromptModal({ prompt, onContinue, onSkipAll }: ModalProps) {
             return (
               <button
                 key={i}
-                onClick={() => picked === null && setPicked(i)}
+                onClick={() => pick(i)}
                 disabled={picked !== null}
                 style={{
                   display: 'flex', alignItems: 'flex-start', gap: '10px',

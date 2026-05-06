@@ -12,6 +12,8 @@ interface BookmarkShelfProps {
   onSelectCase: (caseNumber: number) => void
   /** Click handler for "Browse all cases" footer link */
   onBrowseAll?: () => void
+  /** Volume label shown under "Bookmark Shelf" — e.g. "Drills · Vol II" */
+  volumeLabel?: string
 }
 
 const STATUS_RIBBONS: Record<string, { color: string; label: string }> = {
@@ -30,7 +32,7 @@ const MOCK_PNL: Record<string, string> = {
   'SVB-23': '−₹3,200',
 }
 
-export function BookmarkShelf({ shelfCases, currentCaseNumber, onSelectCase, onBrowseAll }: BookmarkShelfProps) {
+export function BookmarkShelf({ shelfCases, currentCaseNumber, onSelectCase, onBrowseAll, volumeLabel }: BookmarkShelfProps) {
   return (
     <aside style={{
       width: '240px',
@@ -60,7 +62,7 @@ export function BookmarkShelf({ shelfCases, currentCaseNumber, onSelectCase, onB
         textTransform: 'uppercase',
         marginBottom: '4px',
       }}>
-        Left Sidebar
+        {volumeLabel ?? 'Left Sidebar'}
       </div>
 
       {/* Case rows */}

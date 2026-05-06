@@ -24,13 +24,22 @@ import { AchievementCaseRenderer } from '@/components/ledger/case-renderers/achi
 
 import type { Case, SimulationCase } from '@/types/ledger'
 
-// Cases that show up in the bookmark shelf (recent + featured).
-// COV-20 leads — it's our v1 unlocked simulation.
-const SHELF_CASE_IDS = ['COV-20', 'LEH-08', 'GME-21', 'BRX-16', 'SVB-23', 'FLC-10']
+// Default shelf for Vol III simulation cases (when on the simulation volume).
+const SIM_SHELF_CASE_IDS = ['COV-20', 'LEH-08', 'GME-21', 'BRX-16', 'SVB-23', 'FLC-10']
 
-/** Map simulation case id → briefing video filename (in /public/videos/) */
-function briefingVideoFor(caseId: string): string {
-  return `/videos/orus-briefing-${caseId.toLowerCase()}.mp4`
+// Volume → human label for the shelf header.
+const VOLUME_LABEL: Record<string, string> = {
+  'I':   'Lectures · Vol I',
+  'II':  'Drills · Vol II',
+  'III': 'Simulations · Vol III',
+  'IV':  'Analyses · Vol IV',
+  'V':   'Trader Profiles · Vol V',
+  'VI':  'Achievements · Vol VI',
+}
+
+/** All cases use the same Blender-rendered ORUS briefing animation. */
+function briefingVideoFor(_caseId: string): string {
+  return `/videos/orus-briefing-render.mp4`
 }
 
 function LedgerInner() {
@@ -48,10 +57,20 @@ function LedgerInner() {
   const currentCaseNumber = Number.isFinite(requested) && requested > 0 ? requested : defaultCase
 
   const currentCase = getCase(currentCaseNumber) ?? LEDGER_CASES[0]
-  const shelfCases = useMemo(
-    () => SHELF_CASE_IDS.map(id => LEDGER_CASES.find(c => c.id === id)).filter(Boolean) as Case[],
-    [],
-  )
+  const shelfCases = useMemo(() => {
+    const vol = currentCase.volume
+    // Vol III simulations: use the curated featured list
+    if (vol === 'III') {
+      return SIM_SHELF_CASE_IDS
+        .map(id => LEDGER_CASES.find(c => c.id === id))
+        .filter(Boolean) as Case[]
+    }
+    // Other volumes: show all cases in this volume (excluding chapter dividers), capped
+    return LEDGER_CASES
+      .filter(c => c.volume === vol && c.type !== 'chapter-divider')
+      .slice(0, 10)
+  }, [currentCase.volume])
+  const shelfLabel = VOLUME_LABEL[currentCase.volume] ?? 'Left Sidebar'
 
   const goToCase = (n: number) => {
     const clamped = Math.max(1, Math.min(LEDGER_CASES.length, n))
@@ -106,7 +125,7 @@ function LedgerInner() {
         radial-gradient(ellipse at 75% 85%, rgba(60,30,15,0.4) 0%, transparent 55%)
       `,
     }}>
-      {/* HUD */}
+      {/* HUD (now includes the nav strip in its second row) */}
       <LedgerHud totalCases={LEDGER_CASES.length} currentCase={currentCaseNumber} />
 
       {/* Volume jump-strip — chapter tabs into the book */}
@@ -170,6 +189,7 @@ function LedgerInner() {
           currentCaseNumber={currentCaseNumber}
           onSelectCase={goToCase}
           onBrowseAll={() => goToCase(1)}
+          volumeLabel={shelfLabel}
         />
 
         <BookFrame

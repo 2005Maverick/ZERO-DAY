@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { X, AlertTriangle, ChevronRight, Info } from 'lucide-react'
 import { useLiveSession, fmtIST } from '@/lib/contexts/live-session-context'
+import { useTracer } from '@/lib/behavior/tracer'
 import type { NewsEvent } from '@/types/live'
 import { COV20_NEWS_EVENTS } from '@/lib/data/scenarios/cov-20/live-events'
 
@@ -11,6 +12,7 @@ import { COV20_NEWS_EVENTS } from '@/lib/data/scenarios/cov-20/live-events'
 
 export function NewsDropOverlay() {
   const { state } = useLiveSession()
+  const { track } = useTracer()
   const [visible, setVisible] = useState<NewsEvent | null>(null)
   const [acknowledged, setAcknowledged] = useState<Set<string>>(new Set())
 
@@ -24,12 +26,19 @@ export function NewsDropOverlay() {
     )
     if (justFired) {
       setVisible(justFired)
+      // Showing the overlay = the user has seen this headline (full-screen modal)
+      track('news_viewed', state.currentMinute, {
+        newsId: justFired.id,
+        classification: justFired.classification,
+        severity: justFired.severity,
+        via: 'overlay',
+      })
       const t = setTimeout(() => {
         setVisible(null)
       }, 6500)
       return () => clearTimeout(t)
     }
-  }, [state.currentMinute, acknowledged])
+  }, [state.currentMinute, acknowledged, track])
 
   function handleClose() {
     if (visible) setAcknowledged(prev => new Set(prev).add(visible.id))

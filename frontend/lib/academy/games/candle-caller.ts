@@ -1,0 +1,117 @@
+import type { MiniGame } from '../game-types'
+
+// Candle Caller uses single-candle "flashcards" via chart with 1-3 candles
+export const CANDLE_CALLER: MiniGame = {
+  slug: 'candlestick-patterns',
+  title: 'Candle Caller',
+  tagline: 'Name 8 candlestick formations from price action.',
+  accentColor: 'D4A04D',
+  passThreshold: 0.7,
+  customMode: 'candle-memory',
+  rounds: [
+    {
+      id: 'cc1', kind: 'chart_mcq',
+      context: 'Candle · 1 of 8',
+      prompt: 'A candle with very small body and long upper + lower wicks. What is it?',
+      chart: { candles: [{ o: 100, h: 108, l: 92, c: 100.5 }], width: 200, height: 220 },
+      options: [
+        { label: 'Doji', correct: true, feedback: 'Right. Open ≈ close, with long wicks both sides — indecision in the market.' },
+        { label: 'Hammer', correct: false, feedback: 'Hammer has a small body at the TOP with a long lower wick.' },
+        { label: 'Shooting Star', correct: false, feedback: 'Shooting Star has a small body at the BOTTOM with a long upper wick.' },
+        { label: 'Marubozu', correct: false, feedback: 'Marubozu has no wicks — body fills the whole range.' },
+      ],
+      explanation: 'A Doji marks indecision — buyers and sellers fought to a tie. At a top or bottom, this often signals a reversal. In the middle of a trend, it just means a pause.',
+    },
+    {
+      id: 'cc2', kind: 'chart_mcq',
+      context: 'Candle · 2 of 8',
+      prompt: 'Small green body at the top of the candle, with a long lower wick (twice the body length). After a downtrend.',
+      chart: { candles: [{ o: 96, h: 100, l: 84, c: 99 }], width: 200, height: 220 },
+      options: [
+        { label: 'Hammer', correct: true, feedback: 'Yes. Bullish reversal candle — sellers tried to push lower but buyers reclaimed.' },
+        { label: 'Hanging Man', correct: false, feedback: 'Hanging Man looks identical but appears at TOPS of uptrends.' },
+        { label: 'Inverted Hammer', correct: false, feedback: 'Inverted Hammer has the long wick on TOP, not bottom.' },
+        { label: 'Doji', correct: false, feedback: 'Doji bodies are tiny, but Doji has wicks both sides.' },
+      ],
+      explanation: 'Hammer: appears after a downtrend. Sellers pushed price down, but buyers stepped in aggressively and closed near the high. Bullish reversal signal — confirm with next candle making a higher high.',
+    },
+    {
+      id: 'cc3', kind: 'chart_mcq',
+      context: 'Candle · 3 of 8',
+      prompt: 'Small red body at the bottom, with a long upper wick. After an uptrend.',
+      chart: { candles: [{ o: 105, h: 116, l: 99, c: 100 }], width: 200, height: 220 },
+      options: [
+        { label: 'Shooting Star', correct: true, feedback: 'Right. Bearish reversal — buyers pushed up, sellers slammed it back down.' },
+        { label: 'Hammer', correct: false, feedback: 'Hammer has a long LOWER wick.' },
+        { label: 'Inverted Hammer', correct: false, feedback: 'Inverted Hammer also has long upper wick but appears after a DOWNTREND.' },
+        { label: 'Hanging Man', correct: false, feedback: 'Hanging Man has long lower wick.' },
+      ],
+      explanation: 'Shooting Star: rejection from highs after an uptrend. Buyers pushed the price up but failed to hold — sellers took control. Strong bearish reversal candle.',
+    },
+    {
+      id: 'cc4', kind: 'chart_mcq',
+      context: 'Candle · 4 of 8',
+      prompt: 'A small red candle followed by a much larger green candle that completely engulfs it. After a downtrend.',
+      chart: { candles: [{ o: 100, h: 102, l: 96, c: 97 }, { o: 96, h: 105, l: 95, c: 104 }], width: 240, height: 220 },
+      options: [
+        { label: 'Bullish Engulfing', correct: true, feedback: 'Yes. Big green body engulfs prior red — buyers decisively took control.' },
+        { label: 'Bearish Engulfing', correct: false, feedback: 'Bearish Engulfing is opposite — large red engulfs prior green.' },
+        { label: 'Piercing Pattern', correct: false, feedback: 'Piercing Pattern: green candle closes above 50% of prior red — does not fully engulf.' },
+        { label: 'Morning Star', correct: false, feedback: 'Morning Star is a 3-candle pattern with a small middle candle.' },
+      ],
+      explanation: 'Bullish Engulfing is one of the strongest 2-candle reversal signals. The larger the green body relative to the red, the stronger the signal. Volume confirmation makes it institutional-grade.',
+    },
+    {
+      id: 'cc5', kind: 'chart_mcq',
+      context: 'Candle · 5 of 8',
+      prompt: 'A large green candle, then a small green/red candle (any color), then a large red candle that closes well into the first candle. After an uptrend.',
+      chart: { candles: [{ o: 95, h: 105, l: 94, c: 104 }, { o: 105, h: 107, l: 103, c: 105 }, { o: 105, h: 106, l: 95, c: 96 }], width: 280, height: 220 },
+      options: [
+        { label: 'Evening Star', correct: true, feedback: 'Right. Three-candle bearish reversal — strong up, indecision, strong down.' },
+        { label: 'Morning Star', correct: false, feedback: 'Morning Star is the bullish version — appears at bottoms.' },
+        { label: 'Three Black Crows', correct: false, feedback: 'Three Black Crows is three consecutive red candles.' },
+        { label: 'Dark Cloud Cover', correct: false, feedback: 'Dark Cloud Cover is a 2-candle pattern.' },
+      ],
+      explanation: 'Evening Star: top reversal pattern. Day 1 = strong rally. Day 2 = small body (indecision). Day 3 = strong drop closing below day 1 midpoint. Bears took over decisively.',
+    },
+    {
+      id: 'cc6', kind: 'chart_mcq',
+      context: 'Candle · 6 of 8',
+      prompt: 'A candle with no upper wick and no lower wick — body fills the entire range. Strong green color.',
+      chart: { candles: [{ o: 95, h: 105, l: 95, c: 105 }], width: 200, height: 220 },
+      options: [
+        { label: 'Bullish Marubozu', correct: true, feedback: 'Right. Open = low, close = high — buyers in total control all session.' },
+        { label: 'Hammer', correct: false, feedback: 'Hammer has a long lower wick.' },
+        { label: 'Long Body Doji', correct: false, feedback: 'Doji has tiny body — Marubozu is all body.' },
+        { label: 'Bullish Engulfing', correct: false, feedback: 'Engulfing is a 2-candle pattern.' },
+      ],
+      explanation: 'Marubozu = "shaved head/foot" in Japanese. No wicks means absolute one-sided control. Bullish Marubozu in an uptrend = strong continuation. At a bottom = potential reversal.',
+    },
+    {
+      id: 'cc7', kind: 'chart_mcq',
+      context: 'Candle · 7 of 8',
+      prompt: 'A large red candle followed by a small green candle that opens lower but closes inside the prior red body.',
+      chart: { candles: [{ o: 105, h: 106, l: 95, c: 96 }, { o: 95, h: 102, l: 94, c: 101 }], width: 240, height: 220 },
+      options: [
+        { label: 'Piercing Pattern', correct: true, feedback: 'Right. Bullish reversal where green pierces above midpoint of prior red — buyers asserting.' },
+        { label: 'Bullish Engulfing', correct: false, feedback: 'Engulfing requires green body to fully cover the red body.' },
+        { label: 'Hammer', correct: false, feedback: 'Hammer is a single candle with long lower wick.' },
+        { label: 'Bullish Harami', correct: false, feedback: 'Harami: small green body INSIDE the prior red body. Different shape.' },
+      ],
+      explanation: 'Piercing Pattern: 2-candle bullish reversal at a downtrend low. Strength signal: the deeper the green pierces into the red, the stronger. Closing above 50% is the threshold.',
+    },
+    {
+      id: 'cc8', kind: 'chart_mcq',
+      context: 'Candle · 8 of 8',
+      prompt: 'Three consecutive long red candles, each opening within the prior body and closing at new lows. After an uptrend.',
+      chart: { candles: [{ o: 110, h: 111, l: 102, c: 103 }, { o: 105, h: 106, l: 96, c: 97 }, { o: 99, h: 100, l: 90, c: 91 }], width: 320, height: 220 },
+      options: [
+        { label: 'Three Black Crows', correct: true, feedback: 'Right. Three sequential red candles confirming a reversal — sustained selling pressure.' },
+        { label: 'Bearish Engulfing', correct: false, feedback: 'Bearish Engulfing is a 2-candle pattern.' },
+        { label: 'Evening Star', correct: false, feedback: 'Evening Star has a small middle candle, not three big reds.' },
+        { label: 'Falling Three Methods', correct: false, feedback: 'Falling Three Methods is a continuation pattern with small green candles in the middle.' },
+      ],
+      explanation: 'Three Black Crows = strong bearish reversal. Three consecutive red candles, each opening within the prior body and closing near the low. Confirms persistent selling, not a one-day flush.',
+    },
+  ],
+}

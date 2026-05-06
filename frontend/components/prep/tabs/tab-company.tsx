@@ -1,6 +1,9 @@
 'use client'
 
+import { useState } from 'react'
+import { GraduationCap } from 'lucide-react'
 import type { CompanyDetail, BusinessSegment } from '@/lib/data/scenarios/cov-20/companies'
+import { CompanyTutorial } from './company-tutorial'
 
 interface TabCompanyProps {
   company: CompanyDetail
@@ -12,25 +15,50 @@ interface TabCompanyProps {
  * Cream paper background, serif body, page chrome — looks like reading a real filing.
  */
 export function TabCompany({ company, accent }: TabCompanyProps) {
+  const [tutorialOpen, setTutorialOpen] = useState(false)
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <h2 style={H2_DARK}>Company Filing — {company.legalName}</h2>
-        <span style={{
-          fontFamily: 'var(--font-jetbrains), monospace',
-          fontSize: '10px',
-          color: '#5C5849',
-          letterSpacing: '0.12em',
-          textTransform: 'uppercase',
-        }}>
-          From the Annual Report · {company.itr.fiscalYear}
-        </span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          <button
+            onClick={() => setTutorialOpen(true)}
+            style={{
+              display: 'inline-flex', alignItems: 'center', gap: '6px',
+              padding: '6px 12px',
+              background: 'rgba(201,164,95,0.10)',
+              border: '1px solid rgba(201,164,95,0.50)',
+              borderRadius: '5px',
+              color: '#C9A45F',
+              fontFamily: 'var(--font-inter), sans-serif',
+              fontSize: '10px', fontWeight: 700,
+              letterSpacing: '0.18em', textTransform: 'uppercase',
+              cursor: 'pointer',
+            }}
+            onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = 'rgba(201,164,95,0.18)' }}
+            onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = 'rgba(201,164,95,0.10)' }}
+          >
+            <GraduationCap size={11}/> Orus Tutor
+          </button>
+          <span style={{
+            fontFamily: 'var(--font-jetbrains), monospace',
+            fontSize: '10px',
+            color: '#5C5849',
+            letterSpacing: '0.12em',
+            textTransform: 'uppercase',
+          }}>
+            From the Annual Report · {company.itr.fiscalYear}
+          </span>
+        </div>
       </div>
 
-      {/* The "PDF" document */}
+      {/* The "PDF" document — cream paper with subtle noise grain on top */}
       <div style={{
-        background: 'linear-gradient(180deg, #F2EAD2 0%, #E8DCB4 100%)',
-        backgroundImage: `url("data:image/svg+xml;utf8,${encodeURIComponent(PAPER)}")`,
+        backgroundColor: '#F2EAD2',
+        backgroundImage: `url("data:image/svg+xml;utf8,${encodeURIComponent(PAPER)}"), linear-gradient(180deg, #F2EAD2 0%, #E8DCB4 100%)`,
+        backgroundRepeat: 'repeat, no-repeat',
+        backgroundSize: '160px 160px, 100% 100%',
         color: '#1F1006',
         borderRadius: '8px',
         boxShadow: '0 24px 50px rgba(0,0,0,0.6), inset 0 0 60px rgba(120,80,30,0.18)',
@@ -38,7 +66,7 @@ export function TabCompany({ company, accent }: TabCompanyProps) {
         position: 'relative',
       }}>
         {/* Document header */}
-        <div style={{
+        <div data-tut="co-header" style={{
           padding: '32px 56px 22px',
           borderBottom: '2px solid #8B6418',
           background: 'linear-gradient(180deg, rgba(139,100,24,0.06), transparent)',
@@ -78,7 +106,7 @@ export function TabCompany({ company, accent }: TabCompanyProps) {
             </div>
             <SealBadge />
           </div>
-          <div style={{
+          <div data-tut="co-meta" style={{
             display: 'grid',
             gridTemplateColumns: 'repeat(4, 1fr)',
             gap: '14px',
@@ -96,7 +124,7 @@ export function TabCompany({ company, accent }: TabCompanyProps) {
         {/* Document body */}
         <div style={{ padding: '28px 56px 36px', display: 'flex', flexDirection: 'column', gap: '24px' }}>
           <Section title="1. About the Company">
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+            <div data-tut="co-about" style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
               {company.about.map((p, i) => (
                 <p key={i} style={BODY_PARA}>
                   {i === 0 && <span style={DROPCAP}>{p.charAt(0)}</span>}
@@ -107,17 +135,19 @@ export function TabCompany({ company, accent }: TabCompanyProps) {
           </Section>
 
           <Section title="2. Business Segments · Revenue Mix">
-            <SegmentsBars segments={company.segments} />
+            <div data-tut="co-segments">
+              <SegmentsBars segments={company.segments} />
+            </div>
           </Section>
 
           <Section title="3. Promoters & Founders">
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px' }}>
+            <div data-tut="co-promoters" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px' }}>
               {company.promoters.map((p, i) => <PersonCard key={i} person={p} />)}
             </div>
           </Section>
 
           <Section title="4. Key Management Personnel">
-            <div style={{ display: 'flex', flexDirection: 'column' }}>
+            <div data-tut="co-management" style={{ display: 'flex', flexDirection: 'column' }}>
               {company.management.map((p, i) => (
                 <div key={i} style={{
                   display: 'grid',
@@ -136,7 +166,7 @@ export function TabCompany({ company, accent }: TabCompanyProps) {
           </Section>
 
           <Section title="5. Workforce Composition">
-            <div style={{
+            <div data-tut="co-workforce" style={{
               padding: '14px 18px',
               background: 'rgba(139,100,24,0.07)',
               border: '1px solid rgba(139,100,24,0.25)',
@@ -166,7 +196,7 @@ export function TabCompany({ company, accent }: TabCompanyProps) {
           </Section>
 
           <Section title="6. Operational Scale">
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 32px' }}>
+            <div data-tut="co-operations" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 32px' }}>
               {company.operations.map((op, i) => (
                 <div key={i} style={{
                   display: 'grid',
@@ -183,7 +213,7 @@ export function TabCompany({ company, accent }: TabCompanyProps) {
           </Section>
 
           <Section title="7. Statutory Filing — Income & Position (₹ Crores)">
-            <div style={{
+            <div data-tut="co-filing" style={{
               border: '2px solid #8B6418',
               borderRadius: '4px',
               padding: '14px 18px',
@@ -239,6 +269,9 @@ export function TabCompany({ company, accent }: TabCompanyProps) {
           </span>
         </div>
       </div>
+
+      {/* Tutorial overlay */}
+      <CompanyTutorial open={tutorialOpen} onClose={() => setTutorialOpen(false)}/>
 
       {/* Industry note (outside the document, dark theme) */}
       <div style={{

@@ -4,6 +4,8 @@ import { NavigationProvider } from '@/lib/contexts/navigation-context'
 import { UserProvider } from '@/lib/contexts/user-context'
 import { ToastProvider } from '@/lib/contexts/toast-context'
 import { LoadingProvider } from '@/lib/contexts/loading-context'
+import { TracerProvider } from '@/lib/behavior/tracer'
+import { HelpChatWidget } from '@/components/help-chat/chat-widget'
 import "./globals.css";
 
 const geistSans = Geist({
@@ -117,15 +119,18 @@ export default function RootLayout({
       <body
         className={`${geistSans.variable} ${geistMono.variable} ${anton.variable} ${bebasNeue.variable} ${jetbrainsMono.variable} ${inter.variable} ${pirataOne.variable} ${cinzel.variable} ${cormorantSC.variable} ${ebGaramond.variable} ${plexMono.variable} ${bodoni.variable} ${specialElite.variable} ${fraunces.variable} font-sans antialiased`}
       >
-        <UserProvider>
-          <ToastProvider>
-            <LoadingProvider>
-              <NavigationProvider>
-                {children}
-              </NavigationProvider>
-            </LoadingProvider>
-          </ToastProvider>
-        </UserProvider>
+        <TracerProvider>
+          <UserProvider>
+            <ToastProvider>
+              <LoadingProvider>
+                <NavigationProvider>
+                  {children}
+                  <HelpChatWidget/>
+                </NavigationProvider>
+              </LoadingProvider>
+            </ToastProvider>
+          </UserProvider>
+        </TracerProvider>
       </body>
     </html>
   );

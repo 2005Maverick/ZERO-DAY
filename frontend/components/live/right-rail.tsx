@@ -1,8 +1,9 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Eye, Briefcase, FileText, Newspaper, BookOpen } from 'lucide-react'
 import { useLiveSession, fmtIST } from '@/lib/contexts/live-session-context'
+import { useTracer } from '@/lib/behavior/tracer'
 
 const SECTOR_COLOR: Record<string, string> = {
   airlines: '#3B82F6', pharma: '#10B981', energy: '#E11D48',
@@ -17,6 +18,14 @@ type Tab = 'watch' | 'positions' | 'orders' | 'news' | 'coach'
 
 export function RightRail() {
   const [tab, setTab] = useState<Tab>('watch')
+  const { track } = useTracer()
+  const { state } = useLiveSession()
+
+  function selectTab(next: Tab) {
+    if (next === tab) return
+    track('tab_switched', state.currentMinute, { from: tab, to: next })
+    setTab(next)
+  }
 
   const TABS: { key: Tab; label: string; icon: React.ElementType }[] = [
     { key: 'watch',     label: 'Watch',     icon: Eye },
@@ -45,7 +54,7 @@ export function RightRail() {
           return (
             <button
               key={t.key}
-              onClick={() => setTab(t.key)}
+              onClick={() => selectTab(t.key)}
               style={{
                 flex: 1,
                 display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px',
@@ -330,9 +339,32 @@ function OrderRow({ order, onCancel }: { order: ReturnType<typeof useLiveSession
 
 function NewsPanel() {
   const { pendingNews, state } = useLiveSession()
+  const { events, track } = useTracer()
   const news = pendingNews().slice().reverse()
   const signals = news.filter(n => n.classification === 'signal')
   const noise = news.filter(n => n.classification === 'noise')
+
+  // Emit news_viewed once per session per id — dedup against the existing trace
+  // so re-mounting the panel (tab switching) does not re-emit.
+  useEffect(() => {
+    const alreadyViewed = new Set(
+      events
+        .filter(e => e.kind === 'news_viewed')
+        .map(e => (e.data as { newsId?: string } | undefined)?.newsId)
+        .filter(Boolean) as string[],
+    )
+    const visible = [...signals.slice(0, 8), ...noise.slice(0, 6)]
+    for (const n of visible) {
+      if (!alreadyViewed.has(n.id)) {
+        track('news_viewed', state.currentMinute, {
+          newsId: n.id,
+          classification: n.classification,
+          severity: (n as { severity?: string }).severity,
+          via: 'rail',
+        })
+      }
+    }
+  }, [signals.length, noise.length, state.currentMinute, events, track])
 
   return (
     <div style={{ padding: '12px 10px', display: 'flex', flexDirection: 'column', gap: '10px' }}>

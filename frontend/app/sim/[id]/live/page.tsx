@@ -9,6 +9,7 @@ import { RightRail } from '@/components/live/right-rail'
 import { BottomDock } from '@/components/live/bottom-dock'
 import { LiveTutorial } from '@/components/live/live-tutorial'
 import { LiveCoachPrompts } from '@/components/live/live-coach-prompts'
+import { TraceBridge } from '@/lib/behavior/trace-bridge'
 import {
   NewsDropOverlay, CircuitBreakerOverlay, EndOfDayModal,
   OrderTypeCoach, SizingCoach,
@@ -18,6 +19,7 @@ export default function LiveRoomPage({ params }: { params: Promise<{ id: string 
   const { id: _id } = use(params)
   return (
     <LiveSessionProvider>
+      <TraceBridge />
       <LiveRoomShell />
     </LiveSessionProvider>
   )
@@ -135,23 +137,34 @@ function LiveRoomShell() {
             }}>
               Closing now forfeits the current session. Your trades will be marked-to-market and you\'ll be sent to the debrief.
             </p>
-            <div style={{ display: 'flex', gap: '10px' }}>
-              <button onClick={() => setExitConfirm(false)} style={{
-                flex: 1, padding: '11px',
-                background: 'transparent', border: '1px solid rgba(212,160,77,0.4)',
-                borderRadius: '6px', color: '#FF1F1F',
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              <div style={{ display: 'flex', gap: '10px' }}>
+                <button onClick={() => setExitConfirm(false)} style={{
+                  flex: 1, padding: '11px',
+                  background: 'transparent', border: '1px solid rgba(212,160,77,0.4)',
+                  borderRadius: '6px', color: '#FF1F1F',
+                  fontFamily: 'var(--font-inter), sans-serif',
+                  fontSize: '11px', fontWeight: 700, letterSpacing: '0.18em',
+                  textTransform: 'uppercase', cursor: 'pointer',
+                }}>Cancel</button>
+                <button onClick={() => { setExitConfirm(false); router.push('/ledger?case=35') }} style={{
+                  flex: 1, padding: '11px',
+                  background: 'linear-gradient(180deg, #FF1F1F, #8B0000)',
+                  border: '1px solid #FF1F1F', borderRadius: '6px', color: '#E0E0E0',
+                  fontFamily: 'var(--font-inter), sans-serif',
+                  fontSize: '11px', fontWeight: 700, letterSpacing: '0.18em',
+                  textTransform: 'uppercase', cursor: 'pointer',
+                }}>Forfeit & Exit</button>
+              </div>
+              <button onClick={() => router.push('/academy')} style={{
+                padding: '9px',
+                background: 'rgba(212,160,77,0.06)',
+                border: '1px solid rgba(212,160,77,0.30)',
+                borderRadius: '6px', color: '#D4A04D',
                 fontFamily: 'var(--font-inter), sans-serif',
-                fontSize: '11px', fontWeight: 700, letterSpacing: '0.18em',
+                fontSize: '10px', fontWeight: 700, letterSpacing: '0.16em',
                 textTransform: 'uppercase', cursor: 'pointer',
-              }}>Cancel</button>
-              <button onClick={() => { setExitConfirm(false); router.push('/ledger?case=35') }} style={{
-                flex: 1, padding: '11px',
-                background: 'linear-gradient(180deg, #FF1F1F, #8B0000)',
-                border: '1px solid #FF1F1F', borderRadius: '6px', color: '#E0E0E0',
-                fontFamily: 'var(--font-inter), sans-serif',
-                fontSize: '11px', fontWeight: 700, letterSpacing: '0.18em',
-                textTransform: 'uppercase', cursor: 'pointer',
-              }}>Forfeit & Exit</button>
+              }}>Or visit the Academy →</button>
             </div>
           </div>
         </div>

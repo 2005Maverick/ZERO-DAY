@@ -1,11 +1,12 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { ChevronLeft, ChevronRight, X, Play, Check } from 'lucide-react'
-import { CausalChainBlock } from './live-tutorial-causal-chain'
-import { AnimatedPnLBlock } from './live-tutorial-animated-pnl'
-import { TrialTradeBlock } from './live-tutorial-trial'
-import { CinematicBlock } from './live-tutorial-cinematic'
+import { CausalChainBlock } from './tutorial/causal-chain'
+import { AnimatedPnLBlock } from './tutorial/animated-pnl'
+import { TrialTradeBlock } from './tutorial/trial-trade'
+import { CinematicBlock } from './tutorial/cinematic'
+import { useTracer } from '@/lib/behavior/tracer'
 
 export interface TutorialProps {
   open: boolean
@@ -279,11 +280,23 @@ const PHASE_COLORS: Record<Phase, string> = {
 export function LiveTutorial({ open, onClose }: TutorialProps) {
   const [idx, setIdx] = useState(0)
   const [bounds, setBounds] = useState<DOMRect | null>(null)
+  const { track } = useTracer()
+  const slideEnterRef = useRef<number>(Date.now())
 
   const slide = SLIDES[idx]
   const isLast = idx === SLIDES.length - 1
 
-  useEffect(() => { if (open) setIdx(0) }, [open])
+  useEffect(() => { if (open) { setIdx(0); track('tutorial_opened', 0) } }, [open, track])
+
+  // Track slide views with dwell time
+  useEffect(() => {
+    if (!open) return
+    slideEnterRef.current = Date.now()
+    return () => {
+      const dwellMs = Date.now() - slideEnterRef.current
+      track('tutorial_slide_viewed', 0, { slideId: slide.id, phase: slide.phase, dwellMs })
+    }
+  }, [open, idx, slide.id, slide.phase, track])
 
   useEffect(() => {
     if (!open || !slide.targetId) { setBounds(null); return }
@@ -304,11 +317,16 @@ export function LiveTutorial({ open, onClose }: TutorialProps) {
   }, [open, idx, slide.targetId])
 
   const next = useCallback(() => {
-    if (isLast) { onClose(); return }
+    if (isLast) { track('tutorial_completed', 0); onClose(); return }
     setIdx(i => i + 1)
-  }, [isLast, onClose])
+  }, [isLast, onClose, track])
 
   const prev = useCallback(() => setIdx(i => Math.max(0, i - 1)), [])
+
+  const handleClose = useCallback(() => {
+    if (!isLast) track('tutorial_skipped', 0, { atSlideId: slide.id })
+    onClose()
+  }, [isLast, slide.id, onClose, track])
 
   useEffect(() => {
     if (!open) return
@@ -317,11 +335,11 @@ export function LiveTutorial({ open, onClose }: TutorialProps) {
       if (tag === 'INPUT' || tag === 'TEXTAREA') return
       if (e.key === 'ArrowRight' || e.key === 'Enter') next()
       if (e.key === 'ArrowLeft') prev()
-      if (e.key === 'Escape') onClose()
+      if (e.key === 'Escape') handleClose()
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [open, next, prev, onClose])
+  }, [open, next, prev, handleClose])
 
   if (!open) return null
 
@@ -356,7 +374,7 @@ export function LiveTutorial({ open, onClose }: TutorialProps) {
         isLast={isLast}
         onPrev={prev}
         onNext={next}
-        onClose={onClose}
+        onClose={handleClose}
         onJump={setIdx}
       />
 
@@ -491,7 +509,7 @@ function TutDialog({
         )}
 
         {/* Inline quiz */}
-        {slide.quiz && <QuizBlock quiz={slide.quiz} phaseColor={phaseColor}/>}
+        {slide.quiz && <QuizBlock quiz={slide.quiz} phaseColor={phaseColor} slideId={slide.id}/>}
 
         <NavigationFooter
           idx={idx}
@@ -552,10 +570,19 @@ function DialogHeader({ slide, phaseColor, onClose }: { slide: Slide; phaseColor
   )
 }
 
-function QuizBlock({ quiz, phaseColor }: { quiz: Quiz; phaseColor: string }) {
+function QuizBlock({ quiz, phaseColor, slideId }: { quiz: Quiz; phaseColor: string; slideId: number }) {
   const [picked, setPicked] = useState<number | null>(null)
+  const { track } = useTracer()
   const reveal = picked !== null
   const isCorrect = reveal && picked === quiz.correctIdx
+
+  function pick(i: number) {
+    if (picked !== null) return
+    setPicked(i)
+    track('tutorial_quiz_answered', 0, {
+      slideId, pickedIdx: i, correct: i === quiz.correctIdx,
+    })
+  }
 
   return (
     <div style={{
@@ -594,7 +621,7 @@ function QuizBlock({ quiz, phaseColor }: { quiz: Quiz; phaseColor: string }) {
           return (
             <button
               key={i}
-              onClick={() => picked === null && setPicked(i)}
+              onClick={() => pick(i)}
               disabled={picked !== null}
               style={{
                 display: 'flex', alignItems: 'flex-start', gap: '8px',

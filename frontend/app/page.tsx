@@ -433,6 +433,61 @@ export default function SplashPage() {
           <span style={{ position: 'absolute', bottom: '-1px', right: '-1px', width: '10px', height: '10px', borderBottom: '2px solid rgba(232,232,232,0.6)', borderRight: '2px solid rgba(232,232,232,0.6)' }} />
         </motion.button>
 
+        {/* Secondary nav — quick paths for returning users */}
+        <motion.div
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 2.55, duration: 0.7 }}
+          style={{
+            display: 'flex', flexWrap: 'wrap', justifyContent: 'center',
+            gap: '12px', marginTop: '36px',
+          }}
+        >
+          {[
+            { href: '/academy',                label: 'Academy',  hint: 'Watch + play' },
+            { href: '/ledger',                 label: 'Ledger',   hint: 'Read cases' },
+            { href: '/sim/COV-20/live',        label: 'Live Sim', hint: 'Trade COV-20' },
+            { href: '/sim/COV-20/debrief',     label: 'Debrief',  hint: 'Last session' },
+          ].map(item => (
+            <button
+              key={item.href}
+              onClick={() => router.push(item.href)}
+              style={{
+                display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: '2px',
+                padding: '10px 18px',
+                background: 'rgba(0,0,0,0.45)',
+                border: '1px solid rgba(232,232,232,0.10)',
+                borderRadius: '4px',
+                color: '#e8e8e8',
+                fontFamily: 'var(--font-geist-sans), -apple-system, sans-serif',
+                cursor: 'pointer',
+                transition: 'all 0.2s',
+                textAlign: 'left',
+              }}
+              onMouseEnter={e => {
+                const el = e.currentTarget as HTMLButtonElement
+                el.style.borderColor = 'rgba(220,38,38,0.5)'
+                el.style.background = 'rgba(220,38,38,0.06)'
+              }}
+              onMouseLeave={e => {
+                const el = e.currentTarget as HTMLButtonElement
+                el.style.borderColor = 'rgba(232,232,232,0.10)'
+                el.style.background = 'rgba(0,0,0,0.45)'
+              }}
+            >
+              <span style={{
+                fontSize: '11px', fontWeight: 700,
+                letterSpacing: '0.16em', textTransform: 'uppercase',
+              }}>{item.label}</span>
+              <span style={{
+                fontSize: '9px',
+                color: 'rgba(180,180,180,0.55)',
+                letterSpacing: '0.08em',
+              }}>{item.hint}</span>
+            </button>
+          ))}
+        </motion.div>
+
       </main>
 
       <style>{`
