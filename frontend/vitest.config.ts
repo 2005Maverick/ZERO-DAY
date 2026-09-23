@@ -14,5 +14,7 @@ export default defineConfig({
   test: {
     environment: 'node',
     include: ['lib/**/*.test.ts'],
+    // Live tests call real APIs and cost tokens: run them with `npm run test:live`.
+    exclude: ['**/node_modules/**', '**/*.live.test.ts'],
   },
 })

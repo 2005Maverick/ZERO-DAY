@@ -41,6 +41,11 @@ export interface ModelRequest {
   toolChoice?: ToolChoice
   /** Only sent when set: the gpt-oss models don't support parallel calls, per Groq's docs. */
   parallelToolCalls?: boolean
+  /**
+   * Structured output (single-shot agents only: Groq can't combine it with tools or streaming).
+   * strict: true = constrained decoding; only some models support it.
+   */
+  responseFormat?: { type: 'json_schema'; json_schema: { name: string; strict: boolean; schema: Record<string, unknown> } }
   maxTokens: number
   temperature?: number
   signal: AbortSignal
@@ -92,6 +97,7 @@ export function createGroqCaller({ keys, baseUrl = 'https://api.groq.com/openai/
       messages: req.messages,
       ...(req.tools?.length ? { tools: req.tools, tool_choice: req.toolChoice ?? 'auto' } : {}),
       ...(req.tools?.length && req.parallelToolCalls !== undefined ? { parallel_tool_calls: req.parallelToolCalls } : {}),
+      ...(req.responseFormat ? { response_format: req.responseFormat } : {}),
       max_completion_tokens: req.maxTokens,
       temperature: req.temperature ?? 0.2,
       stream: false,
@@ -158,7 +164,7 @@ function parseCompletion(json: unknown, latencyMs: number): ModelResponse {
 
 /** One scripted model turn: plain text, some tool calls, or an error to throw. */
 export type ScriptedTurn =
-  | { text: string }
+  | { text: string; finishReason?: string }
   | { toolCalls: { name: string; args: unknown | string }[]; text?: string }
   | { error: ModelCallError }
 
@@ -185,7 +191,10 @@ export function scriptedModel(turns: ScriptedTurn[]): ModelCaller & { requests: 
       : []
     return parseCompletion(
       {
-        choices: [{ message: { content: turn.text ?? null, tool_calls: toolCalls }, finish_reason: toolCalls.length ? 'tool_calls' : 'stop' }],
+        choices: [{
+          message: { content: turn.text ?? null, tool_calls: toolCalls },
+          finish_reason: 'finishReason' in turn && turn.finishReason ? turn.finishReason : toolCalls.length ? 'tool_calls' : 'stop',
+        }],
         usage: { prompt_tokens: 100, completion_tokens: 20 },
       },
       1,

@@ -70,6 +70,16 @@ describe('createGroqCaller', () => {
     expect(calls[0].body.tool_choice).toEqual(forced)
   })
 
+  it('sends response_format only when given', async () => {
+    const { impl, calls } = fakeFetch([ok({ content: '{}' }), ok({ content: 'x' })])
+    const call = createGroqCaller({ keys: ['k1'], fetchImpl: impl })
+    const rf = { type: 'json_schema' as const, json_schema: { name: 'coach_output', strict: true, schema: { type: 'object' } } }
+    await call(req({ responseFormat: rf }))
+    await call(req())
+    expect(calls[0].body.response_format).toEqual(rf)
+    expect(calls[1].body.response_format).toBeUndefined()
+  })
+
   it('rotates to the next key on 429 and succeeds', async () => {
     const { impl, calls } = fakeFetch([{ status: 429, body: 'slow down' }, ok({ content: 'hello' })])
     const res = await createGroqCaller({ keys: ['k1', 'k2'], fetchImpl: impl })(req())

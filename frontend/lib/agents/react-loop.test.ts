@@ -113,6 +113,18 @@ describe('runReactAgent: decisions', () => {
     expect(model.requests).toHaveLength(1)
   })
 
+  it('2 + 3: after an invalid submit, EVERY tool call in that turn gets a tool message (the API rejects unanswered calls)', async () => {
+    const model = scriptedModel([{ toolCalls: [callRsi, submit({ summary: 'x' })] }, { toolCalls: [submit(good)] }])
+    const run = await runReactAgent(makeSpec(), { q: 'why' }, deps(model))
+    expect(run.status).toBe('ok')
+    expect(rsiCalls).toBe(0)
+    const msgs = model.requests[1].messages
+    const assistant = msgs.find(m => m.role === 'assistant')
+    if (assistant?.role !== 'assistant') throw new Error('no assistant message')
+    const answered = msgs.flatMap(m => (m.role === 'tool' ? [m.tool_call_id] : []))
+    expect(answered.sort()).toEqual(assistant.tool_calls!.map(tc => tc.id).sort())
+  })
+
   it('3: an invalid submit gets one repair attempt', async () => {
     const model = scriptedModel([{ toolCalls: [submit({ summary: 'x' })] }, { toolCalls: [submit(good)] }])
     const run = await runReactAgent(makeSpec(), { q: 'why' }, deps(model))
@@ -193,7 +205,7 @@ describe('runReactAgent: decisions', () => {
   it('6: other model errors end the run as error without retrying', async () => {
     const model = scriptedModel([{ error: new ModelCallError('http', 'Groq 500', 500) }])
     const run = await runReactAgent(makeSpec(), { q: 'why' }, deps(model))
-    expect(run).toMatchObject({ status: 'error', output: null })
+    expect(run).toMatchObject({ status: 'error', output: null, error: 'http: Groq 500' })
     expect(model.requests).toHaveLength(1)
   })
 })

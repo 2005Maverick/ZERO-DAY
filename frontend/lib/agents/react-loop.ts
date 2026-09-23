@@ -1,10 +1,18 @@
 import 'server-only'
-import type { ModelCaller } from './model'
-import type { AgentRun, AgentSpec, ToolContext } from './types'
+import { z } from 'zod'
+import { createRegistry, executeTool } from './registry'
+import { submitTool, toGroqTool } from './groq-tools'
+import { ModelCallError, type ChatMessage, type ModelCaller, type ModelResponse, type ToolChoice } from './model'
+import { TIMED_OUT, describeError, startDeadline, sumUsage } from './run-support'
+import {
+  SUBMIT_TOOL_NAME,
+  type AgentRun, type AgentSpec, type AgentStep, type RawToolCall, type RunStatus, type ToolContext, type ToolStep,
+} from './types'
 
 // ============================================================================
-// ReAct loop (roadmap 1.3), YOURS TO IMPLEMENT.
+// ReAct loop (roadmap 1.3)
 // Decisions agreed 2026-09-23; react-loop.test.ts checks each one.
+// Implementation written by Claude at Bhavya's request (recorded in docs/LEARNINGS.md).
 // ============================================================================
 //
 // Setup
@@ -58,6 +66,133 @@ export async function runReactAgent<In, Out>(
   input: In,
   deps: ReactDeps,
 ): Promise<AgentRun<Out>> {
-  void spec; void input; void deps
-  throw new Error('runReactAgent: not implemented yet')
+  const started = Date.now()
+  const runId = deps.newRunId?.() ?? crypto.randomUUID()
+  const steps: AgentStep[] = []
+
+  // One deadline for the whole run [decision 5]. Its signal cancels the
+  // in-flight model call and tells tools to stop; racing against `timedOut`
+  // guarantees we return on time even if something ignores the signal.
+  const deadline = startDeadline(spec.limits.timeoutMs)
+  const { timedOut } = deadline
+
+  // Every ending goes through here, so the deadline is always cleared.
+  const finish = (status: RunStatus, output: Out | null = null, error?: string): AgentRun<Out> => {
+    deadline.clear()
+    return {
+      runId, agent: spec.name, status, output, ...(error ? { error } : {}), steps,
+      usage: { ...sumUsage(steps), latencyMs: Date.now() - started },
+    }
+  }
+
+  try {
+    if (!spec.model) return finish('error', null, 'AgentSpec.model is required for a react agent')
+    const registry = createRegistry(spec.tools)
+    const tools = [...spec.tools.map(toGroqTool), submitTool(spec.output, SUBMIT_DESCRIPTION)]
+    const messages: ChatMessage[] = [
+      { role: 'system', content: spec.systemPrompt ?? '' },
+      { role: 'user', content: spec.buildUserMessage?.(input) ?? '' },
+    ]
+    const ctx: ToolContext = { ...deps.ctx, signal: deadline.signal }
+    let invalidSubmits = 0
+    let malformedCalls = 0
+
+    for (let step = 1; step <= spec.limits.maxSteps; step++) {
+      // [decision 4] the last step can only submit
+      const toolChoice: ToolChoice = step === spec.limits.maxSteps
+        ? { type: 'function', function: { name: SUBMIT_TOOL_NAME } }
+        : 'required'
+
+      let response: ModelResponse
+      try {
+        const r = await Promise.race([
+          deps.model({ model: spec.model, messages, tools, toolChoice, maxTokens: spec.limits.maxTokens, signal: deadline.signal }),
+          timedOut,
+        ])
+        if (r === TIMED_OUT) return finish('timeout', null, `Run exceeded ${spec.limits.timeoutMs}ms waiting for the model`)
+        response = r
+      } catch (err) {
+        if (err instanceof ModelCallError && err.kind === 'aborted') return finish('timeout', null, err.message)   // [decision 6]
+        if (err instanceof ModelCallError && err.kind === 'tool_use_failed' && ++malformedCalls === 1) {
+          messages.push({ role: 'user', content: NUDGE_MALFORMED })                                        // retry once
+          continue
+        }
+        return finish('error', null, describeError(err))
+      }
+
+      steps.push(response.step)
+      messages.push(response.message)
+      const calls = response.step.toolCalls
+
+      // [decision 1] prose instead of a tool call: nudge, and it counts as a step
+      if (calls.length === 0) {
+        messages.push({ role: 'user', content: NUDGE_PROSE })
+        continue
+      }
+
+      // [decision 2] a submit ends the turn; the other calls in it are not run
+      const submit = calls.find(c => c.name === SUBMIT_TOOL_NAME)
+      if (submit) {
+        const checked = checkSubmit(submit, spec.output)
+        steps.push(checked)
+        if (!checked.errorKind) return finish('ok', checked.result as Out)
+        if (++invalidSubmits === 2) return finish('invalid_output')                                     // [decision 3]
+        // Answer EVERY call from this turn: the API rejects a request that
+        // leaves any tool call from the previous assistant message unanswered.
+        for (const call of calls) {
+          messages.push(call === submit
+            ? toolMessage(call, checked)
+            : { role: 'tool', tool_call_id: call.id, name: call.name, content: SKIPPED_BESIDE_SUBMIT })
+        }
+        continue
+      }
+
+      for (const call of calls) {
+        const r = await Promise.race([executeTool(registry, call, ctx, spec.limits.toolTimeoutMs), timedOut])
+        if (r === TIMED_OUT) return finish('timeout', null, `Run exceeded ${spec.limits.timeoutMs}ms during tool "${call.name}"`)
+        steps.push(r)
+        messages.push(toolMessage(call, r))
+      }
+    }
+    return finish('step_limit')
+  } catch (err) {
+    return finish('error', null, describeError(err))   // anything unexpected: the loop never throws
+  }
+}
+
+// ─── Helpers and the fixed messages the model sees ──────────
+
+
+const SUBMIT_DESCRIPTION =
+  'Submit your final findings. Call this once you have enough evidence from the other tools. Its arguments are your answer.'
+const NUDGE_PROSE =
+  'Do not reply in plain text. Call one of the tools, or call submit_findings with your final answer.'
+const NUDGE_MALFORMED =
+  'Your last tool call was malformed. Call a tool again with arguments that are a valid JSON object.'
+const SKIPPED_BESIDE_SUBMIT =
+  'ERROR (skipped): not run, because submit_findings was called in the same turn. Fix your submission, or call tools on their own first.'
+
+/** Tool results go back as JSON; failures as "ERROR (<kind>): <message>" so the model can correct itself. */
+function toolMessage(call: RawToolCall, step: ToolStep): ChatMessage {
+  return {
+    role: 'tool', tool_call_id: call.id, name: call.name,
+    content: step.errorKind ? `ERROR (${step.errorKind}): ${step.error}` : JSON.stringify(step.result),
+  }
+}
+
+/** Validates a submit_findings call against the agent's output schema, recorded as a ToolStep for the audit log. */
+function checkSubmit<Out>(call: RawToolCall, schema: z.ZodType<Out>): ToolStep {
+  const started = Date.now()
+  const base = { type: 'tool' as const, callId: call.id, name: call.name }
+  let args: unknown
+  try {
+    args = JSON.parse(call.arguments)
+  } catch {
+    return { ...base, args: call.arguments, errorKind: 'bad_json', error: 'Your submission is not valid JSON. Resend it as a JSON object.', latencyMs: Date.now() - started }
+  }
+  const parsed = schema.safeParse(args)
+  if (!parsed.success) {
+    return { ...base, args, errorKind: 'invalid_args', error: `Your submission does not match the required format:\n${z.prettifyError(parsed.error)}`, latencyMs: Date.now() - started }
+  }
+  return { ...base, args, result: parsed.data, latencyMs: Date.now() - started }
 }

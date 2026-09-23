@@ -167,6 +167,8 @@ export interface AgentRun<Out> {
   agent: AgentName
   status: RunStatus
   output: Out | null
+  /** Why the run failed ('error' / 'timeout'). Without it the audit log can't explain a failure. */
+  error?: string
   steps: AgentStep[]
   usage: { promptTokens: number; completionTokens: number; latencyMs: number }
 }
