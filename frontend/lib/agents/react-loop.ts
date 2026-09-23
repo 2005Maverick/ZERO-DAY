@@ -96,10 +96,20 @@ export async function runReactAgent<In, Out>(
     const ctx: ToolContext = { ...deps.ctx, signal: deadline.signal }
     let invalidSubmits = 0
     let malformedCalls = 0
+    let budgetForced = false   // 1.7: we already gave the over-budget "last chance"
 
     for (let step = 1; step <= spec.limits.maxSteps; step++) {
-      // [decision 4] the last step can only submit
-      const toolChoice: ToolChoice = step === spec.limits.maxSteps
+      // 1.7 token budget: first time over → force a submit; still over after that → stop.
+      const { promptTokens, completionTokens } = sumUsage(steps)
+      const used = promptTokens + completionTokens
+      const overBudget = spec.limits.maxRunTokens !== undefined && used >= spec.limits.maxRunTokens
+      if (overBudget && budgetForced) {
+        return finish('budget_exceeded', null, `Used ${used} tokens; budget is ${spec.limits.maxRunTokens}`)
+      }
+      if (overBudget) budgetForced = true
+
+      // [decision 4] the last step (or the first step over budget) can only submit
+      const toolChoice: ToolChoice = step === spec.limits.maxSteps || overBudget
         ? { type: 'function', function: { name: SUBMIT_TOOL_NAME } }
         : 'required'
 
@@ -154,7 +164,9 @@ export async function runReactAgent<In, Out>(
         messages.push(toolMessage(call, r))
       }
     }
-    return finish('step_limit')
+    return budgetForced
+      ? finish('budget_exceeded', null, `Token budget ${spec.limits.maxRunTokens} exceeded and the forced submit failed`)
+      : finish('step_limit')
   } catch (err) {
     return finish('error', null, describeError(err))   // anything unexpected: the loop never throws
   }

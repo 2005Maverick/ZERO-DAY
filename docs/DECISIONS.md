@@ -82,3 +82,33 @@ Template:
 - Coalescing in the browser means a malicious client can bypass it, so the server still needs a rate limit (8.4).
 - Dropped events get no AI feedback. They must still appear in the audit log (3.2).
 - The template path means Monitor's `summary` must always be written as a sentence the user can read.
+
+---
+
+## ADR-003 — Persistence: event-sourced action log, server-written audit trail, RLS
+**Status:** accepted
+**Date:** 2026-09-23 · **Roadmap:** 3.1, 3.2, 3.5, P1 · **Decided by:** Bhavya Talwar; implemented by Claude
+
+**Context:** V2 must persist sessions and a decision-audit trail, keep users' data private, and eventually give agents trustworthy state (P1). The engine is a reducer that runs in the browser, and the app is hosted serverless on Vercel.
+
+**Options (P1):**
+- (a) Trust client snapshots: simplest, but untrusted.
+- (b) Store the action log and replay the reducer on the server: trusted once the reducer is pure; phased.
+- (c) Run the engine on the server: not viable on serverless, and a rewrite.
+
+**Choice:**
+- **(b), phased.** `session_actions` is an append-only log of user decisions and the source of truth. Ticks aren't stored; replay regenerates them. Agents use client snapshots until the P2 engine fixes land, then switch to server replay. The schema is the same either way.
+- **Six tables:** `profiles`, `sessions`, `session_actions`, `decision_events`, `pipeline_runs`, `agent_runs`. No `trades` table (derived from the log) and no `scenarios` table (scenario data stays in code).
+- **`state_before` stored on each decision event** even though replay could rebuild it. After an engine change, replaying an old log through the new reducer gives different states; the snapshot records what the user actually saw. `sessions.engine_version` records which engine produced a session.
+- **Security:**
+  - Users read only their own rows, and may append only to their own *active* session.
+  - The audit trail and session results are written by the server alone (service role).
+  - Triggers make the log and audit rows immutable for every role, including the server.
+  - A second trigger requires `seq` to be contiguous and `sim_minute` never to go backwards.
+
+**Consequences:**
+- One log serves audit (3.2), replay UI (7.2), QA (4.6) and cross-session analysis (5.4).
+- **The client still chooses which actions to send.** Replay stops it inventing prices, fills or cash, but not leaving out an action. The contiguity trigger catches gaps from sync bugs, not deliberate omission. Say so in the report.
+- The server needs `SUPABASE_SERVICE_ROLE_KEY` (8.2). Leaking it bypasses every policy.
+- `consent_at` is in place, but the ethics question (consent, retention, clearance) is still open.
+- The migration is tested only in PGlite with a minimal Supabase shim. Supabase-specific behaviour (real JWTs, the default grants on the `auth` schema) must be checked once it's applied to the real project.

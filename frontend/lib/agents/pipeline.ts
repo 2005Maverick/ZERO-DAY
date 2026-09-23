@@ -51,7 +51,9 @@ export interface PipelineBudget {
   coachReserveMs: number
 }
 
-export type PipelinePath = 'full' | 'monitor_only' | 'template' | 'rejected'
+/** Runtime list (the database CHECK constraint is tested against it). */
+export const PIPELINE_PATHS = ['full', 'monitor_only', 'template', 'rejected'] as const
+export type PipelinePath = (typeof PIPELINE_PATHS)[number]
 
 export interface PipelineRun<Findings, Feedback> {
   pipelineId: string

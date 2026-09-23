@@ -88,7 +88,9 @@ export interface RawToolCall {
 
 // ─── Agents ─────────────────────────────────────────────────
 
-export type AgentName = 'monitor' | 'research' | 'coach'
+/** Runtime list (the database CHECK constraints are tested against it). */
+export const AGENT_NAMES = ['monitor', 'research', 'coach'] as const
+export type AgentName = (typeof AGENT_NAMES)[number]
 
 export interface AgentLimits {
   /** react: max model calls before giving up. single_shot: 1. deterministic: ignored. */
@@ -99,6 +101,12 @@ export interface AgentLimits {
   timeoutMs: number
   /** per-tool-call timeout */
   toolTimeoutMs: number
+  /**
+   * react only, optional: total tokens (prompt + completion) for the whole run.
+   * Prompt tokens grow every step because the whole conversation is re-sent.
+   * Once exceeded, the next call is forced to submit; if that fails → 'budget_exceeded'.
+   */
+  maxRunTokens?: number
 }
 
 export interface AgentSpec<In, Out> {
@@ -119,13 +127,17 @@ export interface AgentSpec<In, Out> {
 
 // ─── Runs and steps (the audit trail, 3.6) ──────────────────
 
-export type RunStatus =
-  | 'ok'
-  | 'step_limit'      // react loop hit maxSteps without submitting
-  | 'invalid_output'  // final answer failed the output schema (after the repair retry)
-  | 'timeout'         // whole run exceeded limits.timeoutMs
-  | 'error'           // anything else, e.g. upstream API failure
-  | 'fallback'        // orchestrator substituted a non-LLM result
+/** Runtime list (the database CHECK constraints are tested against it). */
+export const RUN_STATUSES = [
+  'ok',
+  'step_limit',       // react loop hit maxSteps without submitting
+  'budget_exceeded',  // react loop hit limits.maxRunTokens without a valid submit
+  'invalid_output',   // final answer failed the output schema (after the repair retry)
+  'timeout',          // whole run exceeded limits.timeoutMs
+  'error',            // anything else, e.g. upstream API failure
+  'fallback',         // orchestrator substituted a non-LLM result
+] as const
+export type RunStatus = (typeof RUN_STATUSES)[number]
 
 /** Why a single tool call failed. Counted per model in evals (e.g. how often the 8B model sends bad args). */
 export type ToolErrorKind =

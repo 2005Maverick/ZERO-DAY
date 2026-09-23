@@ -11,14 +11,14 @@ _Last updated: 2026-09-23_
 ## M0 — Baseline
 - [x] 0.1 Repo audit → `docs/AUDIT.md` — reviewed 2026-09-23
 
-## M1 — Agent Runtime & Orchestration
+## M1 — Agent Runtime & Orchestration — ✅ complete 2026-09-23 (budgets provisional)
 - [x] 1.1 DECIDE: function-calling vs MCP vs chained prompts `[BLOCKS M1, M2, M3.6]` — **D (hybrid)**, see ADR-001
 - [x] 1.2 Agent base interface (input contract, tool registry, output schema, step cap) — done 2026-09-23 (`lib/agents/`); `executeTool` written by Claude at your request
 - [x] 1.3 ReAct loop with step limit + termination condition — Research agent only (ADR-001) · done 2026-09-23 (`lib/agents/react-loop.ts`, 17 tests; written by Claude at your request). First live run 2026-09-23: works on `qwen/qwen3.8-27b` and `openai/gpt-oss-20b` (see `docs/evidence/`)
 - [x] 1.4 Supervisor/orchestrator: Monitor → Research → Coach — done 2026-09-23 (`lib/agents/pipeline.ts` + client `coalesce.ts`, 15 tests; ADR-002; written by Claude at your request). **Tested with fake agents only**: real Monitor/Coach come in 2.1/2.5
 - [x] 1.5 Structured output enforcement (Zod/JSON schema) — done 2026-09-23: loop validates `submit_findings`; `lib/agents/single-shot.ts` uses strict `json_schema` + Zod + one repair (12 tests; written by Claude at your request). Live: strict mode accepted on `gpt-oss-20b` and `qwen3.8-27b`
-- [ ] 1.6 Retries, timeouts, single-shot fallback — PARTIAL: loop + pipeline enforce timeouts; fallback ladder (full → monitor_only → template) in 1.4. Missing: backoff on transient model errors
-- [ ] 1.7 Token/latency budget per agent call — NEW
+- [x] 1.6 Retries, timeouts, single-shot fallback — done 2026-09-23: `withRetry` (backoff + full jitter, transient errors only, `lib/agents/retry.ts`); timeouts in loop/single-shot/pipeline; fallback ladder in 1.4. Written by Claude at your request. `withRetry` gets wired in with the real agents (2.3/2.5)
+- [x] 1.7 Token/latency budget per agent call — done 2026-09-23 (**provisional values**): `lib/agents/budgets.ts` + `maxRunTokens` → forced submit → `budget_exceeded`; consistency tests. Numbers come from 2 live runs per model; re-derive from the 2.7 eval set
 
 ## M2 — The Three Agents
 - [ ] 2.1 Monitor Agent: detect decision events from the FSM — PARTIAL: `TraceBridge` derives order/SL/halt events; news events never fire (engine bug) · deterministic rules, no LLM (ADR-001)
@@ -30,12 +30,12 @@ _Last updated: 2026-09-23_
 - [ ] 2.7 Per-agent eval set (10–20 fixed cases) — NEW · live smoke harness exists (`npm run test:live`); model candidates on your key: `openai/gpt-oss-20b`, `openai/gpt-oss-120b`, `qwen/qwen3.8-27b` (no Llama)
 
 ## M3 — Persistence & Data Layer
-- [ ] 3.1 Supabase schema — NEW (`types/database.ts` is an unrelated, unused older schema)
-- [ ] 3.2 Decision-audit record design — PARTIAL: `TraceEvent` schema; lacks state before/after, reasoning, feedback
+- [x] 3.1 Supabase schema — done 2026-09-23: `supabase/migrations/20260923120000_v2_core.sql` (6 tables, ADR-003), tested in PGlite. **Not yet applied to your Supabase project** (`supabase db push` or SQL editor). `types/database.ts` is now obsolete
+- [x] 3.2 Decision-audit record design — done 2026-09-23: `decision_events` (facts + `state_before`, FK to the triggering action) → `pipeline_runs` (path, feedback) → `agent_runs` (full trace); state after = replay
 - [ ] 3.3 Migrate off localStorage — NEW (6 keys, see AUDIT §4; live session state isn't persisted at all)
 - [ ] 3.4 Supabase Auth — PARTIAL: email + Google work; open redirect, missing `/dashboard`, no route guard, uncommitted auth-bypass fallback
-- [ ] 3.5 RLS policies — NEW
-- [ ] 3.6 Agent run logging (full ReAct trace) — NEW
+- [x] 3.5 RLS policies — done 2026-09-23: users read own rows and append only to their own active session; audit trail + session results server-only; log and audit immutable (triggers). 16 PGlite tests + 3 mutation checks
+- [ ] 3.6 Agent run logging (full ReAct trace) — PARTIAL: `agent_runs` table ready; the server code that writes `AgentRun` → rows is not written yet (needs the service-role key, 8.2)
 - [ ] 3.7 OHLCV cache layer — NEW
 
 ## M4 — Scenario Pipeline
@@ -68,7 +68,7 @@ _Last updated: 2026-09-23_
 
 ## M8 — Infrastructure & Delivery
 - [ ] 8.1 Next.js 16 verification — PARTIAL: 16.1.6, `tsc` passes; build/lint not yet run; middleware→`proxy.ts` question
-- [ ] 8.2 Secrets handling — PARTIAL: Groq keys server-only; no Polygon key
+- [ ] 8.2 Secrets handling — PARTIAL: Groq keys server-only; no Polygon key; **new: `SUPABASE_SERVICE_ROLE_KEY`** needed server-side for audit writes (never `NEXT_PUBLIC_`)
 - [ ] 8.3 CI: run agent eval suite — PARTIAL: CI builds + lints only
 - [ ] 8.4 Rate limiting / cost guardrails — PARTIAL: client-side coalescing (one pipeline per session, latest event wins) + server re-check before spending tokens (1.4). Missing: server-side rate limit
 - [ ] 8.5 Vercel config for new routes — PARTIAL: `maxDuration = 30` set
@@ -79,7 +79,7 @@ _Last updated: 2026-09-23_
 
 The audit surfaced these. I haven't folded them into the modules; accept, merge or reject each.
 
-- P1 **Server-authoritative session state**: agents need a trusted state source (AUDIT §9 Q1). Likely belongs in M3 and gates 2.2.
+- P1 **Server-authoritative session state** — **ACCEPTED 2026-09-23 as (b) phased** (ADR-003): action log stored from day one; agents switch from client snapshot to server replay once P2 lands.
 - P2 **Engine fixes (your code)**: stop-loss execution, news firing, cash reservation, pure reducer, scenario parameterisation (AUDIT §1.4). Gates 2.1, 4.5, 4.6, 5.1.
 - P3 **V1-vs-V2 ablation**: same fixed cases through single-shot and multi-agent, scored. Probably part of 2.7 / 5.5.
 - P4 **Dead-code decision**: portfolio mode, orphan routes, `ai/` prototypes (AUDIT §7).

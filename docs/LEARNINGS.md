@@ -303,3 +303,82 @@ There are 15 tests, all with fake agents. ADR-002 records the decisions.
 3. Why validate with Zod when the decoder is already constrained?
 
 **Open questions:** none new. The Coach's content rules belong to 2.5.
+
+---
+
+## [2026-09-23] 1.6 + 1.7 — Retries with backoff, and budgets (M1 complete)
+
+**Authorship note:** written by Claude at Bhavya's request.
+
+**What we built:**
+- `lib/agents/retry.ts`: `withRetry(caller)` wraps any `ModelCaller` and retries only temporary failures, with exponential backoff and full jitter.
+- `lib/agents/budgets.ts`: every time and token limit in one place, derived from the live runs.
+- A total-token cap per ReAct run (`maxRunTokens`) and a new run status, `budget_exceeded`.
+
+12 new tests (81 total), including tests that the budgets are consistent with each other.
+
+**Why this approach:**
+- *Retry as a decorator* (a function that takes a caller and returns a caller): the transport stays "exactly one call", the runners don't know retries exist, and each piece is tested alone. We rejected putting retries inside the transport, which would mix two jobs, and inside the runners, which would duplicate them.
+- *Retry only what waiting can fix.* A 404 (model not found, as in the live run) or a 400 fails identically every time. Retrying just burns the deadline.
+- *A separate `budget_exceeded` status* rather than reusing `step_limit`: "too expensive" and "ran out of turns" have different fixes (a bigger budget vs. a better prompt), so evals must tell them apart.
+
+**How it actually works:**
+- **Exponential backoff:** wait longer after each failure (250 ms cap, then 500 ms, …, at most 2 s), so a struggling server gets breathing room.
+- **Full jitter:** each wait is a *random* amount between 0 and that cap. Without jitter, every client that failed at the same moment retries at the same moment, and the spike repeats (the "thundering herd").
+- **Waits are cancellable:** the sleep listens to the run's abort signal, so a run that times out mid-wait stops immediately instead of sleeping on.
+- **Why prompt tokens grow:** each ReAct step re-sends the whole conversation so far. Step 3 pays for steps 1 and 2 again, so cost rises faster than the number of steps. `maxRunTokens` caps the total: the first time a run is over, the next call is forced to submit (the same "last chance" as the final step); still over after that → `budget_exceeded`.
+- **Budgets as a system:** every number has a stated source (e.g. Research timeout 9 s ≈ 1.7× the slowest observed 5.4 s). Tests enforce the relationships: Research fits inside the pipeline's share, Coach fits inside its reserve, and worst-case backoff still leaves Coach time for a real call.
+
+**Gotchas:**
+- The budgets rest on **two live runs per model**. That says nothing about variance or tail latency (the slow 5% of runs). They're provisional until the eval set (2.7) gives proper distributions. Don't quote them in the report as measured performance.
+- `withRetry` isn't wired in anywhere yet. It's applied when the real agents are assembled (2.3/2.5): `withRetry(createGroqCaller(...))`.
+- gpt-oss is a reasoning model: its hidden reasoning tokens count toward `max_completion_tokens`, hence Coach's larger `maxTokens` (800).
+
+**Viva check:**
+1. Why is a 404 never retried, but a 503 is?
+2. What problem does jitter solve?
+3. Why does the token cost of a ReAct run grow faster than its number of steps?
+
+**Open questions:**
+- Real latency distributions (p50/p95) per model: 2.7.
+- Groq's rate limits for this key (tokens per minute) aren't known yet. They cap how many decision events per minute the app can afford: 8.4.
+
+---
+
+## [2026-09-23] 3.1 / 3.2 / 3.5 — Event-sourced schema and RLS, tested in a real Postgres
+
+**Authorship note:** design decided by Bhavya (P1 = b phased, six tables, snapshots); SQL and tests written by Claude at Bhavya's request.
+
+**What we built:**
+- `supabase/migrations/20260923120000_v2_core.sql`: six tables, RLS policies, and two integrity triggers.
+- `frontend/test/supabase-shim.sql`: the minimum of Supabase needed to run the migration in tests.
+- `frontend/lib/db/migration.test.ts`: 16 tests running the real migration in PGlite, acting as users A and B, a signed-out visitor, and the server.
+- Run statuses, agent names and pipeline paths are now runtime constants, and tests check them against the database's CHECK lists.
+
+ADR-003 records the decisions. The migration has **not** been applied to the real Supabase project yet.
+
+**Why this approach:** Event sourcing fits an engine that's already a reducer. One append-only log gives audit, replay, QA and cross-session analysis, and makes server-side trust possible once the reducer is pure. We tested RLS in a real Postgres rather than trusting it by reading: security rules that were never run are the likeliest thing to be wrong.
+
+**How it actually works:**
+- **Row Level Security:** Postgres attaches a condition to every query on a table, per role. `using (...)` filters which rows you can *see or change*; `with check (...)` decides which rows you may *write*. Blocked reads and updates silently match 0 rows; blocked inserts raise an error. Supabase's `service_role` has `BYPASSRLS`, which is why only the server may hold that key.
+- **Append-only, in two layers.** RLS gives users no update/delete policy at all. A `BEFORE UPDATE` trigger raises an error for *everyone*, including the service role, which RLS can't restrict.
+- **`(select auth.uid())`** in policies, instead of bare `auth.uid()`: Postgres evaluates it once per statement instead of once per row. This is Supabase's documented performance advice.
+- **Drift tests.** The allowed values exist twice, in TypeScript (`RUN_STATUSES`) and in SQL (`CHECK (status in ...)`). A test reads the constraint back from the database catalogue (`pg_get_constraintdef`) and compares, so adding a status in one place and forgetting the other fails CI.
+
+**Gotchas:**
+- **Triggers run before RLS checks.** A `BEFORE INSERT` trigger fires before the policy's `with check`, and runs *as the calling user*, so RLS also filters what the trigger itself can see. User B, inserting into A's session, got the trigger's "expected seq 0" error, not an RLS error. Still blocked, but by a different rule. The test proves both: seq 1 is stopped by the trigger, and seq 0 (which passes the trigger) is stopped by RLS.
+- `user` is a reserved word in Postgres (`set app.user = ...` is a syntax error).
+- Mutation-tested: allowing appends to ended sessions, disabling RLS on `agent_runs`, and dropping the no-update trigger each broke exactly one test. The restored file was byte-identical.
+- The honest limit: replay stops a client inventing prices, fills or cash, but it still *chooses which actions to send*. Omission is possible, and the contiguity rule catches sync bugs, not malice.
+- Shell tip: a very long bash command mixing heredocs and quotes failed to parse ("unexpected EOF"), and nothing ran. Checked, then moved the edit into a script file.
+
+**Viva check:**
+1. What's the difference between RLS `using` and `with check`?
+2. Why is the no-update rule a trigger and not just "no update policy"?
+3. Why store `state_before` when replay could rebuild it?
+4. What can a malicious client still do under this design?
+
+**Open questions:**
+- Apply the migration to the real project and re-check with real JWTs.
+- The server code that writes `AgentRun` / `PipelineRun` rows (3.6), and the client sync of actions (3.3).
+- Ethics: consent, retention and deletion policy.

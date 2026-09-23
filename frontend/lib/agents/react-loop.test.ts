@@ -156,6 +156,24 @@ describe('runReactAgent: decisions', () => {
     expect(model.requests).toHaveLength(3)
   })
 
+  it('1.7: going over maxRunTokens forces a submit on the next call', async () => {
+    // the fake reports 100 prompt + 20 completion tokens per call
+    const model = scriptedModel([{ toolCalls: [callRsi] }, { toolCalls: [callRsi] }, { toolCalls: [submit(good)] }])
+    const run = await runReactAgent(makeSpec({}, { maxRunTokens: 200 }), { q: 'why' }, deps(model))
+    expect(run.status).toBe('ok')
+    expect(model.requests.map(r => r.toolChoice)).toEqual([
+      'required', 'required', { type: 'function', function: { name: 'submit_findings' } },
+    ])
+  })
+
+  it('1.7: still over budget after the forced submit fails → budget_exceeded', async () => {
+    const model = scriptedModel([{ toolCalls: [callRsi] }, { toolCalls: [callRsi] }, { text: 'no' }])
+    const run = await runReactAgent(makeSpec({}, { maxRunTokens: 200 }), { q: 'why' }, deps(model))
+    expect(run).toMatchObject({ status: 'budget_exceeded', output: null })
+    expect(run.error).toMatch(/Used 360 tokens; budget is 200/)
+    expect(model.requests).toHaveLength(3)
+  })
+
   it('5 + 6: a model call still running when the run timer fires ends as timeout, keeping earlier steps', async () => {
     const first = scriptedModel([{ toolCalls: [callRsi] }])
     let n = 0
