@@ -30,7 +30,7 @@ _Last updated: 2026-09-23_
 - [ ] 2.7 Per-agent eval set (10–20 fixed cases) — NEW · live smoke harness exists (`npm run test:live`); model candidates on your key: `openai/gpt-oss-20b`, `openai/gpt-oss-120b`, `qwen/qwen3.8-27b` (no Llama)
 
 ## M3 — Persistence & Data Layer
-- [x] 3.1 Supabase schema — done 2026-09-23: `supabase/migrations/20260923120000_v2_core.sql` (6 tables, ADR-003), tested in PGlite. **Not yet applied to your Supabase project** (`supabase db push` or SQL editor). `types/database.ts` is now obsolete
+- [x] 3.1 Supabase schema — done 2026-09-23: `supabase/migrations/20260923120000_v2_core.sql` (6 tables, ADR-003), tested in PGlite. **Applied to your Supabase project** (verified 2026-09-24: all 6 tables exist; anon gets `permission denied`). Signed-in RLS not yet checked with a real user. `types/database.ts` is now obsolete
 - [x] 3.2 Decision-audit record design — done 2026-09-23: `decision_events` (facts + `state_before`, FK to the triggering action) → `pipeline_runs` (path, feedback) → `agent_runs` (full trace); state after = replay
 - [ ] 3.3 Migrate off localStorage — NEW (6 keys, see AUDIT §4; live session state isn't persisted at all)
 - [ ] 3.4 Supabase Auth — PARTIAL: email + Google work; open redirect, missing `/dashboard`, no route guard, uncommitted auth-bypass fallback
@@ -68,7 +68,7 @@ _Last updated: 2026-09-23_
 
 ## M8 — Infrastructure & Delivery
 - [ ] 8.1 Next.js 16 verification — PARTIAL: 16.1.6, `tsc` passes; build/lint not yet run; middleware→`proxy.ts` question
-- [ ] 8.2 Secrets handling — PARTIAL: Groq keys server-only; no Polygon key; **new: `SUPABASE_SERVICE_ROLE_KEY`** needed server-side for audit writes (never `NEXT_PUBLIC_`)
+- [ ] 8.2 Secrets handling — PARTIAL: Groq keys server-only; no Polygon key; **`SUPABASE_SERVICE_ROLE_KEY`** in `frontend/.env` and verified working (2026-09-24, read-only check); **still needed in Vercel** env vars (never `NEXT_PUBLIC_`)
 - [ ] 8.3 CI: run agent eval suite — PARTIAL: CI builds + lints only
 - [ ] 8.4 Rate limiting / cost guardrails — PARTIAL: client-side coalescing (one pipeline per session, latest event wins) + server re-check before spending tokens (1.4). Missing: server-side rate limit
 - [ ] 8.5 Vercel config for new routes — PARTIAL: `maxDuration = 30` set
