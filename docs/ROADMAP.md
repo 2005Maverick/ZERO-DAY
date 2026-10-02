@@ -25,7 +25,7 @@ _Last updated: 2026-10-02_
 - [ ] 2.2 Monitor tools: position, portfolio state, scenario clock — PARTIAL: selectors exist client-side only
 - [~] 2.3 Research Agent — built 2026-10-02 (ADR-007): `lib/agents/research/` (ReAct, 5 tools, grounding check inside the loop). Tested with scripted models. **Live (2 runs, `docs/evidence/2026-10-02-live-research-agent.txt`): 1 of 8 runs ok.** Blockers found: Groq free tier = 8,000 tokens/min per model and one run uses 3.5–6.5k (it can 429 on its own); gpt-oss fails forced submits (loop fix applied, not yet re-run live); summary quality poor in the one ok run. Capacity decided (ADR-008): Research on `qwen/qwen3.8-27b`, Coach on `openai/gpt-oss-20b` (separate per-model limits), sim pauses on decision events (to build with the client wiring)
 - [x] 2.4 Research tools — done 2026-10-02: `get_price_window`, `get_indicators`, `get_news`, `get_market`, `get_position` over a market view capped at the decision minute; lookback-only arguments; symbol enum per scenario. No-lookahead property test (every tool, 54 minutes × 6 symbols × 3 lookbacks, scenario cut and poisoned) + 2 planted leaks caught. New `lib/indicators/` (Wilder RSI, SMA, VWAP; null instead of invented values)
-- [~] 2.5 Coach Agent — built 2026-10-02 (ADR-008): `lib/agents/coach/` single-shot strict JSON on `openai/gpt-oss-20b`; content rules ENFORCED by a check (every number must come from Monitor's facts or Research's findings; no stop-loss advice) with one repair; deterministic `coachTemplate` for the fallback path, which passes the same rules (tested on every kind and on all events from 40 random sessions). 21 tests. **Live: 2 of 2 ok, <1 s, ~1k tokens.** Open: Monitor's `news_reflex` facts carry the signal/noise label, and Coach repeats it (answer key; your call). Not yet wired into a route
+- [~] 2.5 Coach Agent — built 2026-10-02 (ADR-008): `lib/agents/coach/` single-shot strict JSON on `openai/gpt-oss-20b`; content rules ENFORCED by a check (every number must come from Monitor's facts or Research's findings; no stop-loss advice) with one repair; deterministic `coachTemplate` for the fallback path, which passes the same rules (tested on every kind and on all events from 40 random sessions). 21 tests. **Live: 2 of 2 ok, <1 s, ~1k tokens.** Open: Monitor's `news_reflex` facts carry the signal/noise label, and Coach repeats it (answer key; your call). Wired 2026-10-02: `/api/pipeline` + live-room panel (see 7.1)
 - [ ] 2.6 Coach tools: decision history, bias taxonomy — PARTIAL: 10-rule taxonomy in `lib/behavior/mistakes.ts`; history is single-session
 - [ ] 2.7 Per-agent eval set (10–20 fixed cases) — NEW · live smoke harness exists (`npm run test:live`); model candidates on your key: `openai/gpt-oss-20b`, `openai/gpt-oss-120b`, `qwen/qwen3.8-27b` (no Llama)
 
@@ -60,11 +60,11 @@ _Last updated: 2026-10-02_
 - [ ] 6.4 Architectural-justification section — NEW
 
 ## M7 — Frontend & UX
-- [ ] 7.1 Streaming, non-blocking coach feedback — PARTIAL: streaming only in unreachable routes
+- [~] 7.1 Coach feedback in the live room — wired 2026-10-02 (ADR-008): `components/live/live-agents.tsx` runs Monitor on every action, pauses the sim, calls `POST /api/pipeline` (server replay → Monitor re-check → Research → Coach → template ladder → audit), shows a panel with the source labelled honestly, resumes on "Continue trading". Non-streaming by design (strict JSON can't stream; ADR-002). 21 tests + build + local smoke (401s, route guard). **Not yet tried end-to-end with a signed-in user**
 - [ ] 7.2 Decision-audit timeline replay — NEW
 - [ ] 7.3 Scenario selection screen — PARTIAL: Ledger exists; sim links hardcoded to COV-20
 - [ ] 7.4 Scorecard + progression dashboard — PARTIAL: debrief only; `/dashboard` is linked but missing
-- [ ] 7.5 Latency states for multi-agent calls — PARTIAL: debrief loading/fallback pattern
+- [~] 7.5 Latency states — the panel shows a "clock is paused while the coach reviews" state; 20 s client timeout → standard feedback
 
 ## M8 — Infrastructure & Delivery
 - [x] 8.1 Next.js 16 verification — done 2026-10-02: `next build` passes (Turbopack and webpack); `proxy.ts` confirmed (Node runtime). The random build failures were a known Turbopack bug with Google Fonts' extensionless `…&skey=…` URLs (vercel/next.js#99114); fixed by self-hosting the 11 used fonts from Fontsource packages via `next/font/local` (3 unused fonts removed). The build makes no Google requests. **Check visually** that pages look unchanged

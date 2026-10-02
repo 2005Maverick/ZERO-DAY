@@ -60,6 +60,8 @@ export async function requestFeedback(event: DetectedEvent, deps: FeedbackDeps):
       res = await deps.fetch('/api/pipeline', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
+        // The server's own budget is 12 s (ADR-002); never leave the panel stuck on "reviewing".
+        signal: AbortSignal.timeout(20_000),
         body: JSON.stringify({ sessionId, actionSeq: event.actionSeq, claimed: { kind: event.kind, simMinute: event.simMinute, symbol: event.symbol } }),
       })
     } catch {

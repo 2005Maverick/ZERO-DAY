@@ -688,3 +688,42 @@ Tests: 21 Coach + 1 runner.
 **Open questions:**
 - Keep or hide `classification` in Monitor's facts?
 - Wiring: the pipeline API route, plus the browser hook that pauses the sim and shows feedback.
+
+---
+
+## [2026-10-02] 7.1 — Wiring: from a click in the live room to coach feedback
+
+**Authorship note:** design approved by Bhavya (ADR-002/008). Code written by Claude at Bhavya's request, including the 2-line change to the live page.
+
+**What we built:**
+- `app/api/pipeline/route.ts` + `lib/agents/pipeline-request.ts` (handler with injected dependencies).
+- `lib/session/decision-coach.ts` (browser logic) + `components/live/live-agents.tsx` (React glue and the panel).
+- `useSessionSync()`, which replaces the `SessionSync` component so the coach can see the sync's progress.
+- `lib/monitor/templates.ts`: client-safe fallback messages.
+- `lib/engine/scenarios.ts`: a scenario registry.
+
+Tests: 21 new (268 in total). The build passes, and a local production-server smoke test returned 401 from both routes to an anonymous caller and redirected a signed-out visit to the live sim to login.
+
+**Why this approach:** The server trusts only what it can rebuild. It ignores the client's state and facts: it reads the stored log under the user's own RLS, replays it, re-runs Monitor, and requires the claimed event to reappear *for that action*. The browser runs the same Monitor only to decide *when* to ask.
+
+**How it actually works:**
+1. A user action is journaled, and the effect runs `monitorSession` on the journal (a few ms).
+2. If there's a new event, the sim pauses (only if it was LIVE; the coach remembers that it paused it), a "reviewing" card shows, and the event goes to the coalescer (one request at a time; the newest waiting event wins).
+3. `requestFeedback` waits until the sync has stored that action (`sync.sent() > actionSeq`), POSTs the claim (kind, minute, symbol), and retries 409 "not synced".
+4. On the server: auth → session (an RLS read) → actions up to that seq → replay (422 if inconsistent) → `runPipeline` with `detect` limited to events of that action → audit (a failure doesn't block feedback) → response.
+5. The panel shows the message, the reflective question and an honest source line ("AI coach · with market research", "… research unavailable", "Standard feedback · …"). "Continue trading" resumes the sim.
+
+**Gotchas:**
+- **The coach's own PAUSE is journaled like a user's.** The `PAUSE` action has no "who" field, which is part of your FSM's types. So Monitor's `news_reflex` will read a coach pause after a headline as "the user stopped to think". Minor, but it's a measurement artefact for 5.x, worth knowing. A fix needs an `Action` change (yours).
+- **Why the claim includes `actionSeq`:** without it, a client could re-claim an old event at a later action and get fresh LLM feedback for free. The server only accepts events triggered by that exact action.
+- **Fetch has no timeout by default.** A stalled request would leave the panel on "reviewing" forever, so the client now aborts after 20 s and shows standard feedback.
+- **The pipeline route still works without Groq keys or the service-role key:** the agents fail cleanly → template feedback; the audit fails → `audited: false`.
+
+**Viva check:**
+1. What does the server refuse to trust from the client, and how does it get each thing instead?
+2. Why does the browser run Monitor at all, if the server re-runs it?
+3. What happens, step by step, if Groq is down during a session?
+
+**Open questions:**
+- An end-to-end test with a signed-in user on the deployed site.
+- Tag coach-initiated pauses (needs an `Action` change in your engine).

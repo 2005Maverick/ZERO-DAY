@@ -15,14 +15,16 @@ import { supabaseTransport } from './supabase-transport'
 export const ENGINE_VERSION = 'cov20.2'
 
 /**
- * Mounts inside LiveSessionProvider, like TraceBridge. Sends the session journal
- * to Supabase (3.3, ADR-005). Pure observer: never dispatches, never blocks the sim.
- * Off unless a real user is signed in (which also covers demo mode and an
- * unconfigured Supabase, whose stub client has no user).
+ * Sends the session journal to Supabase (3.3, ADR-005). Use inside LiveSessionProvider.
+ * Pure observer: never dispatches, never blocks the sim. Off unless a real user is
+ * signed in (which also covers demo mode and an unconfigured Supabase, whose stub
+ * client has no user). Returns the sync object (null while off), which the decision
+ * coach uses to know when an action has reached the server.
  */
-export function SessionSync() {
+export function useSessionSync(): ActionSync | null {
   const { state, journal } = useLiveSession()
   const [enabled, setEnabled] = useState<boolean | null>(DEMO_MODE ? false : null)
+  const [sync, setSync] = useState<ActionSync | null>(null)
   const syncRef = useRef<ActionSync | null>(null)
 
   useEffect(() => {
@@ -37,10 +39,13 @@ export function SessionSync() {
   useEffect(() => {
     if (!enabled) return
     // A ref, not state: StrictMode re-runs effects but keeps refs, so one session per mount.
-    syncRef.current ??= createActionSync({
-      transport: supabaseTransport(createClient(), { scenarioId: state.scenarioId, engineVersion: ENGINE_VERSION }),
-      onStatus: (s, detail) => { if (s === 'failed') console.warn('[session-sync] stopped:', detail) },
-    })
+    if (!syncRef.current) {
+      syncRef.current = createActionSync({
+        transport: supabaseTransport(createClient(), { scenarioId: state.scenarioId, engineVersion: ENGINE_VERSION }),
+        onStatus: (s, detail) => { if (s === 'failed') console.warn('[session-sync] stopped:', detail) },
+      })
+      setSync(syncRef.current)
+    }
     syncRef.current.update(journal)
   }, [enabled, journal, state.scenarioId])
 
@@ -48,5 +53,5 @@ export function SessionSync() {
     if (enabled && state.status === 'CLOSED') void syncRef.current?.end()
   }, [enabled, state.status])
 
-  return null
+  return sync
 }
