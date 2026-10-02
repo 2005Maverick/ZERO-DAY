@@ -54,9 +54,9 @@ _Last updated: 2026-10-02_
 - [ ] 5.5 Baselines: user vs buy-and-hold vs rule-based — NEW
 
 ## M6 — FinVQA-Chart Alignment
-- [ ] 6.1 Enforce: no agent reads numbers off chart images — NEW (trivially true today; unenforced)
+- [~] 6.1 Enforce: no agent reads numbers off chart images — enforced 2026-10-02 (ADR-007): agents get no images at all; Research may only state numbers a tool returned (`check` → `failed_check` → one repair), Coach only numbers from its inputs; tools cannot see past the decision minute (property test). Remaining: an eval-set measure of it (2.7) and the known gap (right number, wrong claim)
 - [ ] 6.2 Document as response to the Fusion Efficiency finding — NEW
-- [ ] 6.3 Text-first chart path (computed indicators) — PARTIAL: indicator functions exist inside a component · live run: numbers were all grounded, but one was **bound to the wrong claim**; binding errors survive the text-first path
+- [~] 6.3 Text-first chart path (computed indicators) — done for agents 2026-10-02: `lib/indicators/` (Wilder RSI, SMA, VWAP, null when data is short) behind `get_indicators`/`get_price_window`. Binding errors (right number, wrong claim) still pass grounding
 - [ ] 6.4 Architectural-justification section — NEW
 
 ## M7 — Frontend & UX
