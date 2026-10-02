@@ -277,3 +277,14 @@ Portfolio mode (22 components + `use-portfolio-game.ts` + data + 2 routes), `com
 
 - **`llama-3.1-8b-instant` is not available on the project's Groq key** (`404 model_not_found`). Listing the key's models returns 11, with no Llama chat models; the chat-capable ones are `openai/gpt-oss-20b`, `openai/gpt-oss-120b` and `qwen/qwen3.8-27b`. All seven V1 routes (§3) hardcode a Llama model (six use `llama-3.1-8b-instant`, `/api/debrief` uses `llama-3.3-70b-versatile`; neither is on the key), so V1's reachable AI features (chat, tutor, debrief) likely fail today. Roadmap P7.
 - Evidence: `docs/evidence/2026-09-23-live-smoke-run.txt`.
+
+---
+
+## Addendum (2026-10-02): prep-room indicator maths
+
+Found while building the Research tools (2.4). In `components/prep/tabs/tab-technicals.tsx`:
+- `computeRSI` returns **50** when there are fewer than period + 1 closes. That's a fabricated "neutral" reading, not "unknown".
+- `computeADX` returns **`20 + Math.random() * 10`** when data is short, so the prep room can show a random number as an indicator.
+- RSI uses simple averages of the last 14 changes, not Wilder's smoothing, so values differ from standard charting tools.
+
+The agents don't use this code. `lib/indicators/` has tested replacements that return null when data is short. Fixing the UI is proposal P9 (Bhavya's code).

@@ -1,5 +1,8 @@
 import 'server-only'
 import { ModelCallError, type ModelCaller } from './model'
+import { backoffDelay, type RetryPolicy } from './backoff'
+
+export { backoffDelay, type RetryPolicy }
 
 // ============================================================================
 // Retry with exponential backoff + full jitter (roadmap 1.6).
@@ -7,13 +10,6 @@ import { ModelCallError, type ModelCaller } from './model'
 // transport stays "one call" and the runners don't know retries exist.
 // Written by Claude at Bhavya's request (2026-09-23).
 // ============================================================================
-
-export interface RetryPolicy {
-  /** retries AFTER the first attempt: 2 = up to 3 calls */
-  maxRetries: number
-  baseDelayMs: number
-  maxDelayMs: number
-}
 
 export const DEFAULT_RETRY: RetryPolicy = { maxRetries: 2, baseDelayMs: 250, maxDelayMs: 2000 }
 
@@ -29,11 +25,6 @@ export function isRetryable(err: unknown): boolean {
     default:
       return false   // tool_use_failed (the loop nudges instead), aborted, bad_response
   }
-}
-
-/** Full jitter: a random wait in [0, min(cap, base·2^n)], so many clients don't retry in lockstep. */
-export function backoffDelay(retry: number, policy: RetryPolicy, random: () => number): number {
-  return Math.min(policy.maxDelayMs, policy.baseDelayMs * 2 ** retry) * random()
 }
 
 function sleep(ms: number, signal: AbortSignal): Promise<void> {

@@ -38,6 +38,8 @@ export interface ScenarioDataset {
   timeline: Record<string, StockTimeline>
   news: NewsEvent[]
   circuits: CircuitBreakerEvent[]
+  /** Market indices (NIFTY, VIX, …), one point per 5-minute bar; pctChange is a fraction vs the previous close. */
+  indices?: Record<string, { minute: number; value: number; pctChange: number }[]>
 }
 
 export interface ToolContext {
@@ -123,6 +125,12 @@ export interface AgentSpec<In, Out> {
   /** The agent's final answer. For react agents this becomes the submit tool's arguments. */
   output: z.ZodType<Out>
   limits: AgentLimits
+  /**
+   * Optional (react and single-shot): a check beyond the schema, run on a schema-valid answer.
+   * Return null to accept, or a message telling the model what to fix (one repair, like a
+   * schema failure). Research uses it to reject numbers no tool returned (M6.1).
+   */
+  check?: (output: Out, steps: readonly AgentStep[], input: In) => string | null
 }
 
 // ─── Runs and steps (the audit trail, 3.6) ──────────────────
@@ -147,6 +155,7 @@ export type ToolErrorKind =
   | 'timeout'         // tool exceeded toolTimeoutMs
   | 'tool_threw'      // our tool code threw
   | 'invalid_output'  // our tool returned something that fails its output schema (our bug)
+  | 'failed_check'    // submission matched the schema but failed the agent's own check (e.g. ungrounded numbers)
 
 export interface ModelStep {
   type: 'model'
@@ -177,6 +186,8 @@ export type AgentStep = ModelStep | ToolStep
 export interface AgentRun<Out> {
   runId: string
   agent: AgentName
+  /** Groq model id the run used (absent for deterministic agents): the audit log must say which model produced what */
+  model?: string
   status: RunStatus
   output: Out | null
   /** Why the run failed ('error' / 'timeout'). Without it the audit log can't explain a failure. */

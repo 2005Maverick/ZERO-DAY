@@ -80,7 +80,7 @@ export async function runReactAgent<In, Out>(
   const finish = (status: RunStatus, output: Out | null = null, error?: string): AgentRun<Out> => {
     deadline.clear()
     return {
-      runId, agent: spec.name, status, output, ...(error ? { error } : {}), steps,
+      runId, agent: spec.name, ...(spec.model ? { model: spec.model } : {}), status, output, ...(error ? { error } : {}), steps,
       usage: { ...sumUsage(steps), latencyMs: Date.now() - started },
     }
   }
@@ -125,6 +125,10 @@ export async function runReactAgent<In, Out>(
         if (err instanceof ModelCallError && err.kind === 'aborted') return finish('timeout', null, err.message)   // [decision 6]
         if (err instanceof ModelCallError && err.kind === 'tool_use_failed' && ++malformedCalls === 1) {
           messages.push({ role: 'user', content: NUDGE_MALFORMED })                                        // retry once
+          // The retry doesn't use up a step: Groq rejected the call, so no step happened.
+          // Otherwise a malformed FORCED submit on the last step leaves no step to retry it in
+          // (live 2026-10-02: gpt-oss, step_limit twice). Bounded: this branch runs at most once.
+          step--
           continue
         }
         return finish('error', null, describeError(err))
@@ -143,7 +147,12 @@ export async function runReactAgent<In, Out>(
       // [decision 2] a submit ends the turn; the other calls in it are not run
       const submit = calls.find(c => c.name === SUBMIT_TOOL_NAME)
       if (submit) {
-        const checked = checkSubmit(submit, spec.output)
+        let checked = checkSubmit(submit, spec.output)
+        if (!checked.errorKind && spec.check) {
+          // The agent's own check (e.g. grounding) runs only on a schema-valid answer.
+          const problem = spec.check(checked.result as Out, steps, input)
+          if (problem) checked = { ...checked, result: undefined, errorKind: 'failed_check', error: problem }
+        }
         steps.push(checked)
         if (!checked.errorKind) return finish('ok', checked.result as Out)
         if (++invalidSubmits === 2) return finish('invalid_output')                                     // [decision 3]

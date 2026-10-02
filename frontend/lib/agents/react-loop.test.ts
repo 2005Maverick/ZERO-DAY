@@ -211,6 +211,18 @@ describe('runReactAgent: decisions', () => {
     expect(lastMessage(model.requests[1].messages).role).toBe('user')
   })
 
+  it('6: a malformed FORCED submit on the last step is retried, still forced (live run 2026-10-02)', async () => {
+    const model = scriptedModel([
+      { toolCalls: [callRsi] },
+      { error: new ModelCallError('tool_use_failed', 'Tool choice is required, but model did not call a tool', 400) },
+      { toolCalls: [submit(good)] },
+    ])
+    const run = await runReactAgent(makeSpec({}, { maxSteps: 2 }), { q: 'why' }, deps(model))
+    expect(run.status).toBe('ok')
+    expect(model.requests).toHaveLength(3)
+    expect(model.requests[2].toolChoice).toEqual({ type: 'function', function: { name: 'submit_findings' } })
+  })
+
   it('6: a second tool_use_failed in the same run ends as error', async () => {
     const model = scriptedModel([
       { error: new ModelCallError('tool_use_failed', 'bad call', 400) },
@@ -229,6 +241,41 @@ describe('runReactAgent: decisions', () => {
 })
 
 // ─── Robustness ─────────────────────────────────────────────
+
+describe("runReactAgent: the agent's own check (spec.check, M6.1)", () => {
+  const mentions9 = (o: Out) => (o.summary.includes('9%') ? 'The number 9 appears in no tool result.' : null)
+
+  it("a schema-valid submit that fails the check gets one repair, with the check's message", async () => {
+    const fixed = { summary: 'INDIGO RSI is 28.4', confidence: 0.8 }
+    const model = scriptedModel([{ toolCalls: [callRsi] }, { toolCalls: [submit(good)] }, { toolCalls: [submit(fixed)] }])
+    const run = await runReactAgent(makeSpec({ check: mentions9 }), { q: 'why' }, deps(model))
+    expect(run).toMatchObject({ status: 'ok', output: fixed })
+    const rejected = toolSteps(run.steps).find(s => s.errorKind === 'failed_check')
+    expect(rejected).toMatchObject({ name: 'submit_findings', error: 'The number 9 appears in no tool result.' })
+    expect(rejected?.result).toBeUndefined()
+    expect(lastMessage(model.requests[2].messages)).toMatchObject({ role: 'tool', content: 'ERROR (failed_check): The number 9 appears in no tool result.' })
+  })
+
+  it('failing the check twice ends as invalid_output', async () => {
+    const model = scriptedModel([{ toolCalls: [submit(good)] }, { toolCalls: [submit(good)] }])
+    const run = await runReactAgent(makeSpec({ check: mentions9 }), { q: 'why' }, deps(model))
+    expect(run.status).toBe('invalid_output')
+  })
+
+  it('sees the steps BEFORE the submission (not circular) and the run input', async () => {
+    let seen: { types: string[]; q: string } | null = null
+    const model = scriptedModel([{ toolCalls: [callRsi] }, { toolCalls: [submit(good)] }])
+    await runReactAgent(makeSpec({ check: (_o, steps, input) => { seen = { types: steps.map(s => s.type === 'tool' ? s.name : 'model'), q: input.q }; return null } }), { q: 'why' }, deps(model))
+    expect(seen).toEqual({ types: ['model', 'get_rsi', 'model'], q: 'why' })
+  })
+
+  it('is not run on a schema-invalid submission', async () => {
+    let calls = 0
+    const model = scriptedModel([{ toolCalls: [submit({ summary: 'x' })] }, { toolCalls: [submit(good)] }])
+    await runReactAgent(makeSpec({ check: () => { calls++; return null } }), { q: 'why' }, deps(model))
+    expect(calls).toBe(1)
+  })
+})
 
 describe('runReactAgent: never throws', () => {
   it('turns an arbitrary thrown error into status error', async () => {

@@ -1,10 +1,7 @@
 import { describe, it, expect, beforeAll } from 'vitest'
-import { PGlite } from '@electric-sql/pglite'
-import { readFileSync, readdirSync } from 'node:fs'
-import { fileURLToPath } from 'node:url'
-import { join } from 'node:path'
 import { AGENT_NAMES, RUN_STATUSES } from '@/lib/agents/types'
 import { PIPELINE_PATHS } from '@/lib/agents/pipeline'
+import { createTestDb, USER_A as A, USER_B as B, type Who } from '@/test/pglite'
 
 // ============================================================================
 // The real migration(s), applied to a real Postgres (PGlite = PostgreSQL in
@@ -12,39 +9,12 @@ import { PIPELINE_PATHS } from '@/lib/agents/pipeline'
 // role, because RLS behaviour is the thing we're proving.
 // ============================================================================
 
-const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations/', import.meta.url))
-const SHIM = fileURLToPath(new URL('../../test/supabase-shim.sql', import.meta.url))
+let t: Awaited<ReturnType<typeof createTestDb>>
+const as = <T,>(who: Who, fn: () => Promise<T>) => t.as(who, fn)
+const rows = (sql: string, params: unknown[] = []) => t.rows(sql, params)
+const affected = (sql: string, params: unknown[] = []) => t.affected(sql, params)
 
-const A = '00000000-0000-4000-8000-00000000000a'
-const B = '00000000-0000-4000-8000-00000000000b'
-
-let db: PGlite
-
-beforeAll(async () => {
-  db = new PGlite()
-  await db.exec(readFileSync(SHIM, 'utf8'))
-  for (const file of readdirSync(MIGRATIONS).filter(f => f.endsWith('.sql')).sort()) {
-    await db.exec(readFileSync(join(MIGRATIONS, file), 'utf8'))
-  }
-  await db.exec(`insert into auth.users (id) values ('${A}'), ('${B}')`)
-}, 30_000)
-
-type Who = typeof A | typeof B | 'anon' | 'service'
-
-/** Runs `fn` as a role, with auth.uid() set the way Supabase sets it from the JWT. */
-async function as<T>(who: Who, fn: () => Promise<T>): Promise<T> {
-  await db.exec('reset role')
-  await db.query(`select set_config('request.jwt.claim.sub', $1, false)`, [who === 'anon' || who === 'service' ? '' : who])
-  await db.exec(`set role ${who === 'anon' ? 'anon' : who === 'service' ? 'service_role' : 'authenticated'}`)
-  try {
-    return await fn()
-  } finally {
-    await db.exec('reset role')
-  }
-}
-
-const rows = async (sql: string, params: unknown[] = []) => (await db.query(sql, params)).rows
-const affected = async (sql: string, params: unknown[] = []) => (await db.query(sql, params)).affectedRows ?? 0
+beforeAll(async () => { t = await createTestDb() }, 30_000)
 
 async function startSession(user: Who): Promise<string> {
   const [row] = await as(user, () => rows(`insert into sessions (scenario_id, engine_version) values ('COV-20', 'v1') returning id`))

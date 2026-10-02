@@ -34,9 +34,14 @@ export interface CoachInput<Findings> {
   findings: Findings | null
 }
 
-export interface PipelineDeps<Findings, Feedback> {
+/**
+ * `MonitorInput` is whatever Monitor needs to re-detect the event. Since 2.1
+ * that's the session's journal (lib/monitor: monitorSession), because events like
+ * panic_sell depend on what came before, not one state. Defaults to the M1 snapshot.
+ */
+export interface PipelineDeps<Findings, Feedback, MonitorInput = SessionSnapshot> {
   /** Monitor's pure rules, re-run on the server's copy of state [decision 1] */
-  detect: (snapshot: SessionSnapshot) => DecisionEvent[]
+  detect: (input: MonitorInput) => DecisionEvent[]
   research: (event: DecisionEvent, opts: { timeoutMs: number }) => Promise<AgentRun<Findings>>
   coach: (input: CoachInput<Findings>, opts: { timeoutMs: number }) => Promise<AgentRun<Feedback>>
   /** deterministic last resort; must not fail */
@@ -89,10 +94,10 @@ async function within<T>(ms: number, work: () => Promise<T>): Promise<T | typeof
 
 const message = (err: unknown) => (err instanceof Error ? err.message : String(err))
 
-export async function runPipeline<Findings, Feedback>(
+export async function runPipeline<Findings, Feedback, MonitorInput = SessionSnapshot>(
   claimed: DecisionEvent,
-  snapshot: SessionSnapshot,
-  deps: PipelineDeps<Findings, Feedback>,
+  monitorInput: MonitorInput,
+  deps: PipelineDeps<Findings, Feedback, MonitorInput>,
   budget: PipelineBudget,
 ): Promise<PipelineRun<Findings, Feedback>> {
   const started = Date.now()
@@ -111,7 +116,7 @@ export async function runPipeline<Findings, Feedback>(
   // ── Monitor: re-detect on the server before spending tokens [decision 1] ──
   let event: DecisionEvent | undefined
   try {
-    event = deps.detect(snapshot).find(e => sameEvent(e, claimed))
+    event = deps.detect(monitorInput).find(e => sameEvent(e, claimed))
   } catch (err) {
     notes.push(`detect threw: ${message(err)}`)
   }

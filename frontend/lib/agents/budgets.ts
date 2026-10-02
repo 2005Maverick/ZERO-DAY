@@ -17,11 +17,13 @@ import type { RetryPolicy } from './retry'
 // ============================================================================
 
 export const RESEARCH_LIMITS: AgentLimits = {
-  maxSteps: 5,           // observed: 3 (2 tool turns + submit); headroom for one nudge/repair
+  maxSteps: 4,           // 3 tool turns + submit, as the prompt asks. Live 2026-10-02: gpt-oss made 4 tool turns when allowed 5 steps
   maxTokens: 600,        // per call: the submit call is the largest
   timeoutMs: 9_000,      // ≈1.7× the slowest observed run (5.4 s)
   toolTimeoutMs: 1_000,  // tools are in-memory lookups (ms); 1 s means something is wrong
-  maxRunTokens: 8_000,   // ≈1.7× the most expensive observed run (4.7k)
+  // Groq free tier: 8,000 tokens/MINUTE per model (headers, 2026-10-02). Research must leave
+  // room for Coach in the same minute, so it can't use the whole 8k.
+  maxRunTokens: 5_000,
 }
 
 export const COACH_LIMITS: AgentLimits = {

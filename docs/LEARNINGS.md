@@ -382,3 +382,309 @@ ADR-003 records the decisions. The migration has **not** been applied to the rea
 - Apply the migration to the real project and re-check with real JWTs.
 - The server code that writes `AgentRun` / `PipelineRun` rows (3.6), and the client sync of actions (3.3).
 - Ethics: consent, retention and deletion policy.
+
+---
+
+## [2026-09-24] 3.6 — Writing the audit trail atomically
+
+**Authorship note:** written by Claude at Bhavya's request.
+
+**What we built:**
+- A database function, `record_pipeline_run(p jsonb)` (migration `20260924090000`), that writes a pipeline run's decision event, pipeline run and agent runs in one transaction. Only the server may call it.
+- `lib/db/audit.ts`: `toAuditPayload` (pure TypeScript → SQL mapping) and `recordPipelineRun`, which never throws.
+- `lib/db/admin.ts`: the service-role Supabase client.
+- `test/pglite.ts`: shared test-database setup.
+- `AgentRun` gained a `model` field.
+
+8 new tests (105 total); 2 mutation checks.
+
+**Why this approach:** One audit record spans three tables. Three separate API calls can fail halfway and leave an event with no feedback, and supabase-js has no client-side transactions. A Postgres function *is* a transaction: all inserts succeed or none do, in one round trip. We rejected sequential inserts with manual cleanup: more code, and still not safe if the process dies mid-way.
+
+**How it actually works:**
+- **Transactions:** a plpgsql function body runs inside the calling transaction. Any error aborts it and rolls back every insert already made. The atomicity test sends one agent run with an invalid status and checks that *no* rows remain, not even the event inserted before it.
+- **RPC exposure:** Supabase publishes every `public` function at `/rest/v1/rpc/<name>` and grants `EXECUTE` to everyone by default. Server-only functions must `revoke execute ... from public, anon, authenticated`.
+- **Two layers of protection:** the function is `security invoker`, so it runs with the *caller's* rights. Even without the revoke, a signed-in user calling it would hit RLS on the tables inside. The mutation check showed exactly that: removing the revoke changed the error from "permission denied" to "row-level security", and the forgery was still blocked. The revoke is the outer wall; RLS is the inner one.
+- **`security definer` was rejected:** it would run with the function *owner's* rights (bypassing RLS for everyone who can call it), turning any grant mistake into a hole.
+
+**Gotchas:**
+- **JSON null is not SQL NULL.** `p->'feedback'` for `{"feedback": null}` returns the jsonb value `null`, which `IS NULL` does not match, so the "rejected pipelines have no feedback" CHECK failed. `nullif(p->'feedback', 'null'::jsonb)` converts it. (`->>`, which returns text, gives SQL NULL directly, so `symbol` and `error` were fine.) The mutation check confirmed the test catches this.
+- `recordPipelineRun` returns `{ ok, error }` rather than throwing, because losing an audit row is bad but blocking the user's coaching over it is worse. Failed writes are not retried here yet: they must at least be logged by the caller.
+- The new migration exists only locally until you apply it to Supabase.
+
+**Viva check:**
+1. Why a database function instead of three inserts from TypeScript?
+2. What does `security invoker` vs `security definer` change?
+3. Why did `{"feedback": null}` break a CHECK constraint?
+
+**Open questions:**
+- Where the pipeline API route lives, and how it gets `actionSeq` and `stateBefore` from the client (2.x / 3.3).
+- Retrying or queueing failed audit writes (currently: log and move on).
+
+---
+
+## [2026-10-02] 3.4 — Auth hardening: open redirects, a route guard, and an honest demo mode
+
+**Authorship note:** plan approved by Bhavya; code written by Claude at Bhavya's request.
+
+**What we built:**
+- `lib/auth/redirect.ts` (`safeNext`), `lib/auth/demo.ts` (demo mode) and `lib/auth/access.ts` (route rules), with 19 tests.
+- `proxy.ts`, Next 16's replacement for middleware.
+- Fixes in the auth callback, the login and signup pages (8 pasted blocks → 1 helper call each) and `next.config.ts` (`/dashboard` redirect).
+
+Verified by a full `next build`: `ƒ Proxy (Middleware)` appears in the output. ADR-004 records the decisions.
+
+**Why this approach:** One proxy guards every page from one place, where per-page checks would be easy to forget on a new page. The rules are a pure function (`decideAccess`), so they're tested without running Next. We kept the demo fallback rather than deleting it because it had a legitimate purpose (demos when Supabase is unreachable), but it now needs an explicit switch and can't use a real person's typed email.
+
+**How it actually works:**
+- **Open redirect:** a login page that redirects to `?next=` is a phishing tool if `next` can point off-site. `https://site.com` + `@evil.com` = `https://site.com@evil.com`, which a browser reads as *user* `site.com` at *host* `evil.com`. Other tricks: `//evil.com` (protocol-relative), `/\evil.com` (browsers treat `\` like `/`), and `/<tab>/evil.com` (browsers strip tabs and newlines, leaving `//`). `safeNext` blocks the known patterns, then does the robust check: resolve the path against a dummy origin and require the origin to be unchanged.
+- **Session refresh in the proxy:** Supabase sessions live in cookies that expire and get refreshed. Server components can't set cookies, so the proxy refreshes them on each request and must copy any new cookies onto *both* the request (for this render) and the response, including redirect responses.
+- **`getUser()` vs `getSession()`:** `getSession()` just reads the cookie, which the client controls. `getUser()` asks Supabase to verify the token. For an access decision, only the verified one counts.
+- **Proxy runtime:** Next 16 runs `proxy.ts` on Node.js *only*. Its build code rejects a `runtime` export there. The old middleware ran on the Edge runtime, which is where `@supabase/ssr` crashed on Vercel.
+
+**Gotchas:**
+- **A plain `TypeError` is not a network error.** The old fallback treated any `TypeError` as "offline", but that's also what `undefined.user` throws. A bug in the login code would have logged someone in.
+- **Flaky Turbopack builds from Google Fonts.** The first build failed (`next/font/google queries have exactly one entry`) on the Cinzel font URL, which contained `&skey=…`. We didn't assume it was pre-existing: the last commit built clean in a fresh copy, then the same tree passed on retry. So it's transient, depending on what Google Fonts returns, and CI or Vercel can fail at random. Self-hosting fonts removes the dependency (8.1).
+- Turbopack refuses a `node_modules` that's a symlink or junction pointing outside the project ("points out of the filesystem root"). The copy needed a real `npm ci`.
+- A long bash heredoc was cut off silently. Python then refused the truncated script, so nothing was half-applied. Script files are more reliable for long edits.
+
+**Viva check:**
+1. Why is `https://site.com@evil.com` an open redirect?
+2. Why does the guard call `getUser()` and not `getSession()`?
+3. Why are API routes excluded from the proxy, and what protects them instead?
+
+**Open questions:**
+- Verify on Vercel: a signed-out visit to `/ledger` must land on `/login?next=%2Fledger`.
+- P8: auth checks inside the ORUS API routes (your code).
+- Should `/welcome` and `/onboarding` stay protected? They are, because they come after login.
+
+---
+
+## [2026-10-02] 3.3 — Session sync: a journal inside the reducer, and replay you can trust
+
+**Authorship note:** design approved by Bhavya. All code was written by Claude at Bhavya's request, **including the 3 edits to the engine** (`live-session-context.tsx`: deterministic order ids, exports, journaled reducer) and the 2-line mount in `app/sim/[id]/live/page.tsx`.
+
+**What we built:**
+- `lib/session/journal.ts`: `withJournal(reducer)`.
+- `replay.ts`.
+- `sync.ts`: the in-order upload queue.
+- `supabase-transport.ts`.
+- `session-sync.tsx`: mounted beside `TraceBridge`.
+- `end-session.ts` + `lib/db/sessions.ts` + `app/api/sessions/end/route.ts`.
+- `lib/agents/backoff.ts`: shared backoff maths.
+
+Tests: 38 new (161 in total), including a fidelity test that rebuilds 150 random sessions from their journals. ADR-005.
+
+**Why this approach:** Event sourcing only works if replay reproduces what the user saw, and that needs two things: each action applied at the *same minute*, and a reducer that's *pure*. Recording inside the reducer gives the first. Deterministic ids give the second.
+
+**How it actually works:**
+- **Where the minute comes from.** React doesn't apply a dispatch immediately: it queues it, and the next render runs the reducer over the queue in order. A component reading `state.currentMinute` sees the last *rendered* state, which can be one tick behind the state the reducer will apply the click to. A wrapper reducer receives the exact state, so its `simMinute` is exact.
+- **Replay regenerates time.** TICKs aren't stored. Replay ticks until the clock reaches the next entry's minute, then applies it. It never needs to know the engine's states: if a tick doesn't move the clock (paused, closed) and the next entry is later, the log is inconsistent, and replay throws rather than guessing.
+- **Purity is testable.** A property-style test plays 150 seeded random sessions (orders of every type, cancels, pauses, the circuit halt, skipping the halt, early end, the bell) through the journaled reducer, round-trips the journal through JSON as the database would, and replays it. With the old `Date.now()` ids, it fails at seed 1. With deterministic ids, all pass. A second test checks the random sessions actually reach those hard paths, so "all pass" isn't vacuous.
+- **The sync queue.** One request in flight at a time. Network errors (no error code) retry forever with capped full-jitter backoff. Any *database* error triggers a resync: ask the server for its last seq. If the server is ahead, a previous batch landed but its response was lost, so adopt the server's position. Otherwise stop as `failed`. An incomplete log is never marked completed.
+
+**Gotchas:**
+- **The re-sent batch fails in the trigger, not the primary key.** BEFORE triggers run before constraint checks, so a duplicate batch fails with `P0001 expected seq N`, not `23505 duplicate key`. Code keyed on `23505` would never fire. PGlite test pins it.
+- **`next build` caught what tests can't.** `sync.ts` (browser) imported `backoffDelay` from `retry.ts`, which is `server-only`. Vitest stubs `server-only`, so only the real build saw it. Fix: move the pure maths to `backoff.ts`.
+- **The Supabase stub client "succeeds".** When Supabase isn't configured, `createClient()` returns a stub whose inserts return no error. Sync is gated on a real signed-in user, which also covers demo mode.
+- **StrictMode** re-runs effects but keeps refs, so the sync object lives in a ref, giving one database session per mount. Two `START` entries can appear in dev; replay is unaffected.
+- **The service-role route's filters are the access control.** RLS doesn't apply to the service role, so `completeSession` filters by id *and* `user_id` *and* `status = 'active'`, with the user id from `getUser()`, never from the body. Tested.
+
+**Viva check:**
+1. Why can wrapping `dispatch` record the wrong minute, when wrapping the reducer can't?
+2. Why did the replay test fail with timestamp-based order ids, and which logged action breaks?
+3. After a lost response, how does sync know the rows landed?
+4. Why does `/api/sessions/end` exist at all, if users can insert rows directly?
+
+**Open questions:**
+- Not yet verified against real Supabase.
+- Tab closed mid-session: unsent entries are lost and the session stays `active`. Should a server job mark stale sessions `abandoned`? Use `sendBeacon` on unload?
+- Resume after refresh needs a heartbeat entry (ticks after the last action are unlogged).
+- For P1 (server replay), the reducer must move out of the `'use client'` module.
+- The other 5 localStorage keys: keep/move list still owed.
+
+---
+
+## [2026-10-02] 2.1 — Monitor: deterministic rules over a journal, and a dataset that can't panic
+
+**Authorship note:** design approved by Bhavya. Claude wrote the framework, the engine move (at Bhavya's request) and 4 rules: `revenge_trade`, `news_reflex`, `oversized_position`, `overtrading`. **Bhavya writes `averaging_down` and `panic_sell`** (`lib/monitor/rules-bhavya.ts`).
+
+**What we built:**
+- `lib/engine/live-reducer.ts`: the engine, moved verbatim (diff-checked against the last commit).
+- `lib/engine/cov20-dataset.ts`.
+- `replaySteps()`: replay that exposes the state before and after each action.
+- `lib/monitor/`: thresholds, the rule context and helpers, rules, and `monitorStep`/`monitorSession`.
+- `runPipeline` made generic over Monitor's input.
+
+Tests: 20 Monitor tests (9 of 9 deliberate breaks caught, after one gap was found and fixed), plus the averaging-down spec. ADR-006.
+
+**Why this approach:**
+- A decision is judged in context: what you held, what just happened, what you did recently.
+- A pure function of the journal runs identically in the browser and on the server, so the server's re-check is a replay, not trust.
+- One event per action with a cooldown bounds the LLM cost.
+
+**How it actually works:**
+- **Rule context:** each rule gets the order the engine just created, the state *before* it (for "were you underwater?"), the journal so far (for "did you pause?" and "how many orders lately?"), and the engine's own pricing.
+- **Realised P&L per sale isn't stored, so it's reconstructed.** `sellResults` replays the engine's average-cost accounting over the fills, in fill order: by minute, then by position in the order list. A test checks it against the engine's `realisedPnL` across 150 random sessions.
+- **Priority and cooldown:** a decision usually *is* one thing. A huge BUY right after a loss is revenge first; the size is secondary. The cooldown stops a burst of orders producing a burst of pipelines.
+- **Fixtures come from the data.** Tests search COV-20's real price path for a moment that fits (e.g. "a 5-minute loss"), rather than hard-coding prices. If the data changes, the fixture follows, and if no such moment exists, the test says so.
+
+**Gotchas:**
+- **COV-20 can't panic.** The steepest 15-minute fall of any stock is 2.08% (INDIGO); the worst fall from any earlier price is 4.61%. A circuit breaker fires at 10:32, but the six stocks are only around 2–4% down. So a 3%-in-15-minutes `panic_sell` never fires. This is the synthetic-data problem from AUDIT TL;DR #2, showing up as a dead rule. Thresholds tuned to this data would be tuned to fiction.
+- **Tests collided with real news.** COV-20 has a headline at minute 2, so "5 orders at minutes 1–5" correctly fired `news_reflex` instead of `overtrading`. Fixtures need quiet windows, which only exist after the halt (no news between minutes 193 and 240).
+- **A survived mutation found a weak test.** "Judge rejected orders" passed because the rejected order in the test matched no rule anyway. The fix was a rejected order that *would* match (an oversized BUY beyond the cash).
+- `'use client'` turns a module's exports into client references on the server, so the reducer had to leave the React context file before the server could replay sessions.
+- Long bash heredocs were truncated again; doc scripts now go in scratchpad files.
+
+**Viva check:**
+1. Why does Monitor take the journal, not a state snapshot?
+2. How do browser and server agree on events without trusting each other?
+3. Why can't you tune `panic_sell` on COV-20, and what would you do instead?
+4. Why is at most one event per action a cost decision, and what does it lose?
+
+**Open questions:**
+- `panic_sell` threshold (decision pending).
+- Wiring: a browser hook that runs `monitorStep` as entries arrive and calls the pipeline through the coalescer, plus the pipeline API route (2.3/2.5).
+- Should `overtrading` count rejected orders? It does now (attempts).
+
+---
+
+## [2026-10-02] 2.1 — panic_sell: measure before you choose a threshold
+
+**Authorship note:** decision by Bhavya, from options and measurements prepared by Claude. Spec by Claude. The rule itself is Bhavya's to write.
+
+**What we built:**
+- The `panic_sell` definition, "on-screen red": `panicDayDropPct: 0.05` vs `prevClose`, plus "still falling" over 15 minutes.
+- `prevClose(symbol)` in the rule context.
+- A 4-test spec, validated against a scratch reference implementation: it passes all tests, and removing any one condition fails exactly that condition's test.
+
+**Why this approach:** I first recommended a threshold relative to the stock's own moves earlier in the session. Measuring it on COV-20 showed it **fails on opening crashes**: the crash *is* the early history, so it becomes the baseline. It fired on 5 minutes all day (TCS, minutes 40–44), never in the sell-off. COV-20's crash is in the *opening gap* (INDIGO opens −5.2%, RELIANCE −6.8% vs the previous close), and that's exactly what the HUD shows in red. So the chosen rule keys on what the user sees.
+
+**How it actually works:** price now ≤ avg cost × 0.98 (a loss), ≤ prevClose × 0.95 (deep red), and < price 15 minutes ago (still falling).
+
+**Gotchas:**
+- **Volatility-relative thresholds assume a stable regime.** On a regime shift (a crash), a baseline from the same window adapts to the shock and stops detecting it. A baseline from *before* the session doesn't, but needs data we don't have yet.
+- **"Red and falling" is common on a crash day** (4 of 6 stocks for about half the session). The rule is specific only because the user's own losing sale is required. Say so in the report.
+- **Testing the spec:** a negative test ("stays quiet when…") is only useful if *some* wrong implementation fails it. We checked each one by removing exactly its condition.
+
+**Viva check:**
+1. Why does a same-session volatility baseline miss an opening crash?
+2. What does `panic_sell` detect on a crash day, and what makes it specific?
+3. What would the pre-session baseline need, and why is it the upgrade path?
+
+**Open questions:**
+- Re-derive with real data (M4.3): σ_daily per stock before each scenario date.
+
+---
+
+## [2026-10-02] 8.1 — Flaky builds: a network fetch hidden inside a font import
+
+**Authorship note:** written by Claude, as planned in 8.1.
+
+**What we built:** `app/layout.tsx` now loads 11 fonts with `next/font/local` from Fontsource npm packages (`@fontsource/*`, `@fontsource-variable/*`), which ship the same Google Fonts files with their licences. Pirata One, Bodoni Moda and Special Elite were removed: nothing referenced their CSS variables.
+
+**Why this approach:** `next/font/google` downloads fonts from Google *at build time*, so every build depended on a third party's HTTP responses. The failure (2 of 4 builds) was a known Turbopack bug: Google sometimes returns font URLs without a file extension, containing `&skey=`, and Turbopack splits the import query at the `&` ("next/font/google queries have exactly one entry", vercel/next.js#99114). Self-hosting removes the network from the build entirely, which is the fix the Next.js issue and other projects converge on.
+
+**How it actually works:**
+- `next/font` (local or Google) emits the font files into `.next/static/media` and generates a CSS class that sets a CSS variable (`--font-inter`, …). Our CSS uses those variables, so swapping the loader doesn't change any component.
+- Variable fonts are one file per style covering a weight *range* (`weight: '100 900'`). Static fonts need one file per weight.
+
+**Gotchas:**
+- The "latin" subset is unchanged, so glyphs outside it (e.g. ₹, U+20B9) fall back to another font, exactly as before.
+- Verified: the build output has no Google URLs (the only match was our own comment in a source map), and all 11 CSS variables are defined. A visual check in the browser is still owed.
+- npm 11 now reports packages whose install scripts it hasn't approved (sharp, unrs-resolver). These are existing dependencies, already installed; nothing changed.
+
+**Open questions:** none.
+
+---
+
+## [2026-10-02] 2.3/2.4 — Research tools that can't see the future, and what one live run costs
+
+**Authorship note:** design approved by Bhavya. All code written by Claude at Bhavya's request.
+
+**What we built:**
+- `lib/agents/research/`:
+  - `market-view.ts`: the market capped at the decision minute.
+  - `tools.ts`: 5 tools, plus `researchTools(symbols)`.
+  - `grounding.ts`.
+  - `research.ts`: spec, prompt, `runResearch`.
+- `lib/indicators/`.
+- `AgentSpec.check` + the `failed_check` error kind.
+- A loop fix (a `tool_use_failed` retry doesn't consume a step).
+- A live test, and evidence in `docs/evidence/2026-10-02-live-research-agent.txt`.
+
+Tests: 28 new (Research 25, loop 5, indicators 9, minus overlaps), 227 in total.
+
+**Why this approach:** "Don't look ahead" in a prompt is a request. A tool with no way to express "later", reading a view that doesn't contain "later", is a guarantee. The same for numbers: the check rejects any number no tool produced, so "no agent reads numbers off charts" is enforced in code.
+
+**How it actually works:**
+- **What's visible at minute m:**
+  - The engine shows the close of the current 5-minute bar, so that close is visible.
+  - The current bar's high, low and volume describe minutes that haven't happened yet, so they're hidden.
+  - Earlier bars are fully visible.
+- **Testing a negative property:** you can't test "never looks ahead" by example. So each tool runs twice per case, on the full scenario and on one cut at the decision minute with the unknowable parts *poisoned* (absurd values) rather than removed, and any difference is a leak. This covers 5 tools × 54 minutes × 6 symbols × 3 lookbacks. Two deliberately leaky tools (one peeks at the current bar's high, one reads a bar ahead) are caught, so the test can fail.
+- **Wilder's RSI:** seed with simple averages of the first 14 gains and losses, then smooth: avg = (prev × 13 + current) / 14. A hand-computed 3-period case pins the smoothing. A test shows the unsmoothed version gives a different answer, so the test would notice the difference.
+- **Grounding with rounding:** a claimed number with d decimals matches a source number that rounds to it at d decimals, ignoring sign. "Fell 2.1%" is grounded by `changePct: -2.08`; "1100" is not grounded by 1143.25.
+
+**Gotchas (mostly from the live runs):**
+- **Free-tier limits decide the architecture.** The response headers show 8,000 tokens/minute per model and 1,000 requests/day. A ReAct run re-sends the whole conversation on every step: prompts grew from 1.4k to 1.9k to 2.3k tokens, so 3–4 steps cost 3.5–6.5k tokens. That's about one pipeline per minute, and a run can trip the limit by itself (qwen hit 429 inside one run).
+- **gpt-oss fails forced tool calls.** With `tool_choice` naming `submit_findings`, gpt-oss sometimes returns no call, and Groq answers 400 `tool_use_failed`. Our retry then used up the last step → `step_limit` (both gpt-oss runs). The loop is now fixed, but whether gpt-oss *succeeds* on the retry is untested live. One suspicion: `maxTokens` 600 may be eaten by gpt-oss's hidden reasoning.
+- **qwen hallucinated a symbol ("TRO") twice;** the error message listing the valid symbols didn't fix it. A schema enum makes it impossible instead.
+- **The one ok run was poor research:** the summary was just a copied headline. Grounded isn't the same as useful, which is why the eval set (2.7) has to score quality, not only status.
+- **qwen makes parallel tool calls** (3 in one turn), which saves round trips. gpt-oss calls one at a time.
+- Test-harness bugs on the way: comparing whole tool steps included `latencyMs`, so everything "leaked". Planted leaky tools sent the wrong arguments, so nothing was caught. Both fixed, and both are why the test-the-test cases exist.
+- `vitest run <folder>` also matched the old smoke test, so two live files ran at once and shared one key's per-minute budget.
+
+**Viva check:**
+1. Why is "lookback only" stronger than clamping a range to `now`?
+2. How does the poisoned-dataset test prove a negative property, and how do you know the test itself works?
+3. Why does a ReAct run's token cost grow faster than its step count?
+4. What does grounding *not* catch?
+
+**Open questions (decision needed):**
+- **Capacity.** Options:
+  - (a) **Use separate models per agent:** limits are per model, so Research on one and Coach on another doubles headroom.
+  - (b) **Spend fewer tokens:** pre-fetch a standard context bundle in code, so Research makes 1–2 calls instead of 4. This is less agentic, and closer to ADR-001's option A.
+  - (c) **Pause the sim on decision events** (the deferred UX question), so events come at human pace.
+  - (d) **A paid Groq tier.**
+  - Not recommended: multiple free accounts to multiply limits, which likely breaks Groq's terms.
+- Whether gpt-oss succeeds on a forced-submit retry; try a larger `maxTokens` or a lower reasoning effort.
+- Research output quality: the prompt and a quality rubric in 2.7.
+
+---
+
+## [2026-10-02] 2.5 — Coach: content rules as code, and a fallback that obeys them
+
+**Authorship note:** design approved by Bhavya (capacity: ADR-008). Code written by Claude at Bhavya's request.
+
+**What we built:**
+- `lib/agents/coach/coach.ts`:
+  - the `CoachFeedback` schema (message, severity, question);
+  - the prompt;
+  - `checkCoach`;
+  - `runCoach`;
+  - `coachTemplate`.
+- `AgentSpec.check` now also works in the single-shot runner.
+- Research moved to `qwen/qwen3.8-27b`.
+- Evidence appended to `docs/evidence/2026-10-02-live-research-agent.txt`.
+
+Tests: 21 Coach + 1 runner.
+
+**Why this approach:** The M1 live run produced two rules: Coach must not state market facts it wasn't given, and must not recommend stop-losses (they never execute). A prompt can ask for both; only a check guarantees them. Numbers are the checkable part of "no new facts", so Coach gets the same provenance check as Research: every number must appear in its inputs.
+
+**How it actually works:**
+- **`checkCoach`:** a regex for stop-loss vocabulary (stop-loss, stop loss, SL, stop order, trailing stop, with word boundaries so "stop and breathe" and "slowly" pass), plus `ungroundedNumbers` against the rendered input text. Either failure triggers one repair, with the reason sent back.
+- **Without research** (the `monitor_only` path), Coach's input says "unavailable", and numbers that only Research had are rejected.
+- **The template is held to the same rules.** A test runs `checkCoach` on the template for every event kind, and for every event Monitor emits across 40 random sessions. The safety net can't violate the rules it backs up.
+
+**Gotchas:**
+- **The answer key can leak through Monitor.** Research withholds the scenario's signal/noise labels, but Monitor's `news_reflex` facts include `classification`, so Coach (live) told the user the headline "was actually noise". Revealing it *after* the decision may be good teaching, but it's a choice. **Open for Bhavya.**
+- Coach is cheap and reliable: about 1k tokens and under 1 s, 2/2 ok live. Research is where the cost and failure live.
+
+**Viva check:**
+1. Why is "no new market facts" enforced on numbers specifically?
+2. Why must the fallback template pass the same check, and how is that tested?
+3. What does ADR-008's model split buy, given Groq's limits are per model?
+
+**Open questions:**
+- Keep or hide `classification` in Monitor's facts?
+- Wiring: the pipeline API route, plus the browser hook that pauses the sim and shows feedback.

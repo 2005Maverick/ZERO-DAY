@@ -8,6 +8,7 @@ import { useNavigation } from '@/lib/contexts/navigation-context'
 import { useUser } from '@/lib/contexts/user-context'
 import { initUser } from '@/lib/utils/localStorage'
 import { createClient } from '@/lib/supabase/client'
+import { DEMO_USER, shouldUseDemoFallback } from '@/lib/auth/demo'
 
 export default function SignupPage() {
     const { navigateTo } = useNavigation()
@@ -26,6 +27,12 @@ export default function SignupPage() {
     useEffect(() => {
         setMounted(true)
     }, [])
+
+    // Demo mode only (NEXT_PUBLIC_DEMO_MODE=true, Supabase unreachable): one fixed demo identity.
+    const enterDemo = (to: string) => {
+        setUser(initUser({ ...DEMO_USER }))
+        navigateTo(to)
+    }
 
     const handleGoogleSignIn = async () => {
         setAuthError(null)
@@ -53,31 +60,11 @@ export default function SignupPage() {
             })
 
             if (error) {
-                if (error.message?.toLowerCase().includes('failed to fetch') || error.message?.toLowerCase().includes('network')) {
-                    const newUser = initUser({
-                        id: `usr_google_${Date.now()}`,
-                        firstName: 'Demo',
-                        lastName: 'User',
-                        email: 'demo@zeroday.market',
-                    })
-                    setUser(newUser)
-                    navigateTo('/onboarding')
-                    return
-                }
+                if (shouldUseDemoFallback(error)) return enterDemo('/onboarding')
                 setAuthError(error.message)
             }
         } catch (err: any) {
-            if (err?.message?.toLowerCase().includes('failed to fetch') || err?.name === 'TypeError') {
-                const newUser = initUser({
-                    id: `usr_google_${Date.now()}`,
-                    firstName: 'Demo',
-                    lastName: 'User',
-                    email: 'demo@zeroday.market',
-                })
-                setUser(newUser)
-                navigateTo('/onboarding')
-                return
-            }
+            if (shouldUseDemoFallback(err)) return enterDemo('/onboarding')
             setAuthError(err.message || 'Failed to start Google sign-in')
         }
     }
@@ -117,17 +104,7 @@ export default function SignupPage() {
             })
 
             if (error) {
-                if (error.message?.toLowerCase().includes('failed to fetch') || error.message?.toLowerCase().includes('network')) {
-                    const newUser = initUser({
-                        id: `usr_${Date.now()}`,
-                        firstName: formData.firstName,
-                        lastName: formData.lastName,
-                        email: formData.email,
-                    })
-                    setUser(newUser)
-                    navigateTo('/onboarding')
-                    return
-                }
+                if (shouldUseDemoFallback(error)) return enterDemo('/onboarding')
                 setAuthError(error.message)
                 setIsLoading(false)
                 return
@@ -144,17 +121,7 @@ export default function SignupPage() {
                 navigateTo('/onboarding')
             }
         } catch (err: any) {
-            if (err?.message?.toLowerCase().includes('failed to fetch') || err?.name === 'TypeError') {
-                const newUser = initUser({
-                    id: `usr_${Date.now()}`,
-                    firstName: formData.firstName,
-                    lastName: formData.lastName,
-                    email: formData.email,
-                })
-                setUser(newUser)
-                navigateTo('/onboarding')
-                return
-            }
+            if (shouldUseDemoFallback(err)) return enterDemo('/onboarding')
             setAuthError(err.message || 'Authentication failed')
             setIsLoading(false)
         }

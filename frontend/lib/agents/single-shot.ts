@@ -35,7 +35,7 @@ export async function runSingleShot<In, Out>(
   const finish = (status: RunStatus, output: Out | null = null, error?: string): AgentRun<Out> => {
     deadline.clear()
     return {
-      runId, agent: spec.name, status, output, ...(error ? { error } : {}), steps,
+      runId, agent: spec.name, ...(spec.model ? { model: spec.model } : {}), status, output, ...(error ? { error } : {}), steps,
       usage: { ...sumUsage(steps), latencyMs: Date.now() - started },
     }
   }
@@ -66,7 +66,12 @@ export async function runSingleShot<In, Out>(
       }
       steps.push(response.step)
 
-      const checked = check(response, spec.output)
+      let checked = check(response, spec.output)
+      if (checked.ok && spec.check) {
+        // The agent's own content check (e.g. Coach: no new numbers, no stop-loss advice).
+        const problem = spec.check(checked.value, steps, input)
+        if (problem) checked = { ok: false, problem }
+      }
       if (checked.ok) return finish('ok', checked.value)
 
       problems.push(`attempt ${attempt}: ${checked.problem}`)

@@ -63,6 +63,15 @@ describe('runSingleShot', () => {
     expect(run.error).toMatch(/attempt 2: does not match/)
   })
 
+  it("spec.check: a schema-valid answer that fails the agent's own check gets one repair with the check's message", async () => {
+    const noStops = (o: Feedback) => (/stop-loss/i.test(o.message) ? 'Do not suggest stop-losses: they do not execute here.' : null)
+    const bad: Feedback = { ...good, message: 'Next time, set a stop-loss before entering.' }
+    const model = scriptedModel([{ text: JSON.stringify(bad) }, { text: JSON.stringify(good) }])
+    const run = await runSingleShot({ ...makeSpec(), check: noStops }, { q: 'why' }, deps(model))
+    expect(run).toMatchObject({ status: 'ok', output: good })
+    expect(last(model.requests[1].messages).content).toMatch(/Do not suggest stop-losses/)
+  })
+
   it('maxSteps: 1 means no repair attempt', async () => {
     const model = scriptedModel([{ text: '{bad' }])
     const run = await runSingleShot(makeSpec(Feedback, { maxSteps: 1 }), { q: 'why' }, deps(model))
