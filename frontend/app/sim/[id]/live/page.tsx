@@ -10,6 +10,7 @@ import { BottomDock } from '@/components/live/bottom-dock'
 import { LiveTutorial } from '@/components/live/live-tutorial'
 import { LiveCoachPrompts } from '@/components/live/live-coach-prompts'
 import { TraceBridge } from '@/lib/behavior/trace-bridge'
+import { LiveAgents } from '@/components/live/live-agents'
 import {
   NewsDropOverlay, CircuitBreakerOverlay, EndOfDayModal,
   OrderTypeCoach, SizingCoach,
@@ -20,6 +21,7 @@ export default function LiveRoomPage({ params }: { params: Promise<{ id: string 
   return (
     <LiveSessionProvider>
       <TraceBridge />
+      <LiveAgents />
       <LiveRoomShell />
     </LiveSessionProvider>
   )
