@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { monitorSession } from './monitor'
+import { averagingDown, panicSell } from './rules-bhavya'
 import { buy, COV20_DATASET, drive, findMoment, px, qtyFor, sell, SYMBOLS } from './test-helpers'
 
 // Spec for Bhavya's rules (rules-bhavya.ts). These fail until the rules are written.
@@ -45,6 +46,24 @@ describe('averaging_down (Bhavya)', () => {
     expect(detect(drive([m, buy(symbol, q2)])).map(e => e.kind)).not.toContain('averaging_down')
     const j = drive([b, buy(symbol, q1), m - b, sell(symbol, 1)])
     expect(detect(j).map(e => e.kind)).not.toContain('averaging_down')
+  })
+})
+
+describe('rules in isolation (the priority order can hide a rule from monitorSession)', () => {
+  // Same underwater position for both: avg 100, price 90 now and 95 fifteen minutes ago, prev close 100.
+  const ctx = (side: 'BUY' | 'SELL') => ({
+    now: 30,
+    order: { id: 'o2', side, type: 'MARKET', symbol: 'TCS', quantity: 5 },
+    before: { positions: { TCS: { symbol: 'TCS', qty: 10, avgPrice: 100, realisedPnL: 0 } } },
+    price: (_s: string, minute = 30) => (minute === 30 ? 90 : 95),
+    prevClose: () => 100,
+  }) as unknown as Parameters<typeof averagingDown>[0]
+
+  it('averaging_down ignores SELLs, panic_sell ignores BUYs', () => {
+    expect(averagingDown(ctx('BUY'))?.kind).toBe('averaging_down')
+    expect(averagingDown(ctx('SELL'))).toBeNull()
+    expect(panicSell(ctx('SELL'))?.kind).toBe('panic_sell')
+    expect(panicSell(ctx('BUY'))).toBeNull()
   })
 })
 

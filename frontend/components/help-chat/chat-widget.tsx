@@ -72,11 +72,14 @@ export function HelpChatWidget() {
           availableImages: ALL_ILLUSTRATION_SLUGS,
         }),
       })
+      if (res.status === 401) throw new Error('Sign in to chat with ORUS.')
+      if (res.status === 429) throw new Error(((await res.json().catch(() => ({}))) as { reply?: string }).reply ?? "You've used ORUS a lot in the last hour. Try again a little later.")
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       const data = await res.json() as { reply: string }
       setMessages(prev => [...prev, { role: 'assistant', content: data.reply, ts: Date.now() }])
     } catch (e) {
-      setError(`Couldn't reach the assistant. ${e instanceof Error ? e.message : 'Unknown error'}`)
+      const msg = e instanceof Error ? e.message : 'Unknown error'
+      setError(msg.startsWith('Sign in') || msg.startsWith("You've used") ? msg : `Couldn't reach the assistant. ${msg}`)
     } finally {
       setLoading(false)
     }

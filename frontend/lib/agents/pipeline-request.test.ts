@@ -55,6 +55,25 @@ describe('POST /api/pipeline', () => {
     expect(calls.records[0]).toMatchObject({ sessionId: SID, actionSeq: event.actionSeq })
   })
 
+  it('8.4: over the hourly limit → 429 before any agent runs; an unavailable limiter fails open', async () => {
+    const limited = makeDeps({ quota: async () => 'exceeded' })
+    const res = await handlePipelineRequest(post(claim()), limited.deps)
+    expect(res.status).toBe(429)
+    expect(limited.calls).toMatchObject({ research: 0, coach: 0 })
+    const open = makeDeps({ quota: async () => 'unavailable' })
+    expect((await handlePipelineRequest(post(claim()), open.deps)).status).toBe(200)
+  })
+
+  it('2.6: the Coach gets the history (earlier events this session, past sessions)', async () => {
+    let seen: unknown
+    const { deps } = makeDeps({
+      coach: async input => { seen = input.history; return okRun('coach', feedback) },
+      pastSessions: async () => [{ result: { version: 1, financial: {}, behaviour: { events: { revenge_trade: 2 } } } }],
+    })
+    await handlePipelineRequest(post(claim()), deps)
+    expect(seen).toEqual({ earlierThisSession: 0, pastSessions: 1, inPastSessions: 2 })
+  })
+
   it('Research sees the state BEFORE the decision, rebuilt by server replay', async () => {
     const { deps, calls, } = makeDeps()
     await handlePipelineRequest(post(claim()), deps)

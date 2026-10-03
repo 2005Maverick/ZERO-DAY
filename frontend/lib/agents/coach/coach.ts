@@ -1,5 +1,7 @@
 import 'server-only'
 import { z } from 'zod'
+import type { MarketSpec } from '@/lib/engine/markets'
+import { describeHistory, type CoachHistory } from './history'
 import type { AgentRun, AgentSpec } from '../types'
 import type { CoachInput, DecisionEvent } from '../pipeline'
 import type { ModelCaller } from '../model'
@@ -31,19 +33,20 @@ export const CoachFeedback = z.object({
 })
 export type CoachFeedback = z.infer<typeof CoachFeedback>
 
-export type CoachRunInput = CoachInput<ResearchFindings> & { scenarioLabel: string }
+export type CoachRunInput = CoachInput<ResearchFindings> & { scenarioLabel: string; market?: MarketSpec; history?: CoachHistory }
 
-export function describeCoachInput({ event, findings, scenarioLabel }: CoachRunInput): string {
+export function describeCoachInput({ event, findings, scenarioLabel, market, history }: CoachRunInput): string {
   const facts = Object.entries(event.facts).map(([k, v]) => `- ${k}: ${v}`).join('\n')
   const research = findings
     ? [`Market context (from the research agent):`, findings.summary, ...findings.evidence.map(e => `- ${e.fact}`)].join('\n')
     : 'Market context: unavailable. Work from the decision facts only.'
   return [
-    `Scenario: ${scenarioLabel}. Time: ${clock(event.simMinute)}.`,
+    `Scenario: ${scenarioLabel}. Time: ${clock(event.simMinute, market)} ${market?.tz ?? 'IST'}.`,
     `Pattern detected: ${event.kind}${event.symbol ? ` (${event.symbol})` : ''}.`,
     `What the user did: ${event.summary}`,
     `Decision facts:\n${facts}`,
     research,
+    ...describeHistory(event.kind, history),
   ].join('\n')
 }
 
@@ -72,6 +75,7 @@ export function coachSpec(model = COACH_MODEL): AgentSpec<CoachRunInput, CoachFe
       '- Use ONLY the facts provided. Do not add market facts, prices or numbers of your own, and never predict what happens next.',
       '- Suggest one thing the user can do in this simulator: pause before acting, size smaller, wait a few minutes, use a limit order, or write down a reason first.',
       '- Never suggest a stop-loss or stop order: they do not work in this simulator.',
+      '- If the input says the pattern was flagged before, say so plainly ("the third time today"): repetition is the point to coach.',
       '- End with one short reflective question in the "question" field.',
     ].join('\n'),
     buildUserMessage: describeCoachInput,
@@ -79,6 +83,7 @@ export function coachSpec(model = COACH_MODEL): AgentSpec<CoachRunInput, CoachFe
     output: CoachFeedback,
     limits: COACH_LIMITS,
     check: checkCoach,
+    reasoningEffort: 'low',
   }
 }
 

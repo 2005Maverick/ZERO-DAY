@@ -7,6 +7,12 @@ export interface RetryPolicy {
   maxRetries: number
   baseDelayMs: number
   maxDelayMs: number
+  /**
+   * When the provider says how long to wait (429 retry-after): wait that long if it is
+   * at most this, otherwise give up at once (the caller's budget can't afford it).
+   * Unset = ignore the provider's hint.
+   */
+  maxRetryAfterMs?: number
 }
 
 /** Full jitter: a random wait in [0, min(cap, base·2^n)], so many clients don't retry in lockstep. */

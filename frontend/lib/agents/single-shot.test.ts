@@ -38,6 +38,24 @@ describe('runSingleShot', () => {
     expect(r.messages).toEqual([{ role: 'system', content: 'SYS' }, { role: 'user', content: 'Q: why' }])
   })
 
+  it('json_validate_failed (strict mode gave up) uses an attempt and retries; passes reasoningEffort', async () => {
+    const model = scriptedModel([
+      { error: new ModelCallError('json_validate_failed', 'Groq 400: json_validate_failed', 400) },
+      { text: JSON.stringify(good) },
+    ])
+    const run = await runSingleShot({ ...makeSpec(), reasoningEffort: 'low' }, { q: 'why' }, deps(model))
+    expect(run.status).toBe('ok')
+    expect(model.requests).toHaveLength(2)
+    expect(model.requests[0].reasoningEffort).toBe('low')
+  })
+
+  it('json_validate_failed on every attempt → invalid_output, with the reason', async () => {
+    const e = () => ({ error: new ModelCallError('json_validate_failed', 'Groq 400: json_validate_failed', 400) })
+    const run = await runSingleShot(makeSpec(), { q: 'why' }, deps(scriptedModel([e(), e()])))
+    expect(run.status).toBe('invalid_output')
+    expect(run.error).toMatch(/could not produce schema-valid JSON/)
+  })
+
   it('repairs invalid JSON once, sending the problem back', async () => {
     const model = scriptedModel([{ text: '{not json' }, { text: JSON.stringify(good) }])
     const run = await runSingleShot(makeSpec(), { q: 'why' }, deps(model))

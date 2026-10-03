@@ -55,13 +55,18 @@ export async function runSingleShot<In, Out>(
       let response: ModelResponse
       try {
         const r = await Promise.race([
-          deps.model({ model: spec.model, messages, responseFormat, maxTokens: spec.limits.maxTokens, signal: deadline.signal }),
+          deps.model({ model: spec.model, messages, responseFormat, maxTokens: spec.limits.maxTokens, reasoningEffort: spec.reasoningEffort, signal: deadline.signal }),
           deadline.timedOut,
         ])
         if (r === TIMED_OUT) return finish('timeout', null, `Run exceeded ${spec.limits.timeoutMs}ms waiting for the model`)
         response = r
       } catch (err) {
         if (err instanceof ModelCallError && err.kind === 'aborted') return finish('timeout', null, err.message)
+        // Strict mode failed to produce valid JSON (no output to show the model): use the attempt and try again.
+        if (err instanceof ModelCallError && err.kind === 'json_validate_failed') {
+          problems.push(`attempt ${attempt}: the provider could not produce schema-valid JSON (${err.message.slice(0, 160)})`)
+          continue
+        }
         return finish('error', null, describeError(err))
       }
       steps.push(response.step)

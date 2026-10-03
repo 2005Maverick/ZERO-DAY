@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest'
+import { NYSE } from '@/lib/engine/markets'
 import { initialState } from '@/lib/engine/live-reducer'
 import { COV20_DATASET } from '@/lib/engine/cov20-dataset'
 import { scriptedModel } from '../model'
@@ -52,7 +53,9 @@ const submit = (summary: string, fact: string) => ({ name: 'submit_findings', ar
 describe('Research agent', () => {
   it('the user message carries the event, the clock time and the facts', () => {
     const msg = describeEvent(input)
-    expect(msg).toMatch(/It is now 10:15 \(session minute 60\)/)
+    expect(msg).toMatch(/It is now 10:15 IST \(session minute 60\)/)
+    // M4: other markets use their own local time
+    expect(describeEvent({ ...input, market: NYSE })).toMatch(/It is now 10:30 ET \(session minute 60\)/)
     expect(msg).toMatch(/panic_sell on INDIGO/)
     expect(msg).toMatch(/lossPct: 4.1/)
   })

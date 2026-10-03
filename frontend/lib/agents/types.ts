@@ -3,6 +3,7 @@ import type { z } from 'zod'
 import type {
   LiveSessionState, StockTimeline, NewsEvent, CircuitBreakerEvent,
 } from '@/types/live'
+import type { MarketSpec } from '@/lib/engine/markets'
 
 // ============================================================================
 // AGENT RUNTIME — contracts (roadmap 1.2, ADR-001)
@@ -40,6 +41,8 @@ export interface ScenarioDataset {
   circuits: CircuitBreakerEvent[]
   /** Market indices (NIFTY, VIX, …), one point per 5-minute bar; pctChange is a fraction vs the previous close. */
   indices?: Record<string, { minute: number; value: number; pctChange: number }[]>
+  /** Trading hours and currency (M4). Absent = NSE, as for COV-20. */
+  market?: MarketSpec
 }
 
 export interface ToolContext {
@@ -131,6 +134,11 @@ export interface AgentSpec<In, Out> {
    * schema failure). Research uses it to reject numbers no tool returned (M6.1).
    */
   check?: (output: Out, steps: readonly AgentStep[], input: In) => string | null
+  /**
+   * Reasoning models only (gpt-oss): how hard to think. Hidden reasoning counts against
+   * maxTokens, so 'low' keeps a short structured answer from being starved (2.7 eval, 2026-10-03).
+   */
+  reasoningEffort?: 'low' | 'medium' | 'high'
 }
 
 // ─── Runs and steps (the audit trail, 3.6) ──────────────────

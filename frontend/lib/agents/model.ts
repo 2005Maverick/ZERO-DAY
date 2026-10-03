@@ -48,6 +48,8 @@ export interface ModelRequest {
   responseFormat?: { type: 'json_schema'; json_schema: { name: string; strict: boolean; schema: Record<string, unknown> } }
   maxTokens: number
   temperature?: number
+  /** reasoning models only; omitted from the request when unset */
+  reasoningEffort?: 'low' | 'medium' | 'high'
   signal: AbortSignal
 }
 
@@ -68,10 +70,12 @@ export type ModelErrorKind =
   | 'network'          // fetch itself failed
   | 'aborted'          // caller's signal fired
   | 'bad_response'     // 2xx but not the shape we expect
+  | 'json_validate_failed' // 400: strict JSON mode couldn't produce a schema-valid document (e.g. ran out of tokens)
 
 /** The transport throws; the agent runner (1.3) turns these into RunStatus values. */
 export class ModelCallError extends Error {
-  constructor(public kind: ModelErrorKind, message: string, public status?: number) {
+  /** retryAfterMs: how long the provider asked us to wait (429 only), if it said */
+  constructor(public kind: ModelErrorKind, message: string, public status?: number, public retryAfterMs?: number) {
     super(message)
     this.name = 'ModelCallError'
   }
@@ -100,9 +104,12 @@ export function createGroqCaller({ keys, baseUrl = 'https://api.groq.com/openai/
       ...(req.responseFormat ? { response_format: req.responseFormat } : {}),
       max_completion_tokens: req.maxTokens,
       temperature: req.temperature ?? 0.2,
+      ...(req.reasoningEffort ? { reasoning_effort: req.reasoningEffort } : {}),
       stream: false,
     })
 
+    // Kept from the last 429 so the error (and the audit row) says WHICH limit was hit.
+    let lastLimit = { reason: '', waitMs: undefined as number | undefined }
     for (let attempt = 0; attempt < keys.length; attempt++) {
       const started = Date.now()
       let res: Response
@@ -119,20 +126,52 @@ export function createGroqCaller({ keys, baseUrl = 'https://api.groq.com/openai/
       }
 
       if (res.status === 429) {
+        lastLimit = { reason: rateLimitReason(await res.text()), waitMs: groqWaitMs(res.headers) }
         keyIndex = (keyIndex + 1) % keys.length
         continue
       }
       if (!res.ok) {
         const text = (await res.text()).slice(0, 500)
         // Observed Groq behaviour, not in the API reference: malformed tool calls come back as a 400 with code "tool_use_failed".
-        const kind: ModelErrorKind = res.status === 400 && text.includes('tool_use_failed') ? 'tool_use_failed' : 'http'
+        const kind: ModelErrorKind = res.status === 400 && text.includes('tool_use_failed') ? 'tool_use_failed'
+          : res.status === 400 && text.includes('json_validate_failed') ? 'json_validate_failed'   // seen live 2026-10-03 (gpt-oss)
+          : 'http'
         throw new ModelCallError(kind, `Groq ${res.status}: ${text}`, res.status)
       }
 
       return parseCompletion(await res.json(), Date.now() - started)
     }
-    throw new ModelCallError('rate_limited', `All ${keys.length} Groq keys returned 429`, 429)
+    const wait = lastLimit.waitMs !== undefined ? `; retry after ${lastLimit.waitMs} ms` : ''
+    throw new ModelCallError('rate_limited', `All ${keys.length} Groq keys returned 429: ${lastLimit.reason || 'no reason given'}${wait}`, 429, lastLimit.waitMs)
   }
+}
+
+/** Groq's 429 body is `{"error":{"message":"Rate limit reached ... on tokens per minute (TPM): Limit 8000, Used ..."}}`. */
+function rateLimitReason(body: string): string {
+  try {
+    const msg = (JSON.parse(body) as { error?: { message?: unknown } }).error?.message
+    if (typeof msg === 'string') return msg.slice(0, 300)
+  } catch { /* not JSON */ }
+  return body.slice(0, 300)
+}
+
+/**
+ * How long Groq asks us to wait: the standard `retry-after` (seconds), else the
+ * time until the token bucket refills (`x-ratelimit-reset-tokens`, e.g. "1m3.5s", "450ms").
+ */
+export function groqWaitMs(headers: Headers): number | undefined {
+  const retryAfter = headers.get('retry-after')
+  if (retryAfter !== null && retryAfter.trim() !== '' && Number.isFinite(Number(retryAfter))) return Math.ceil(Number(retryAfter) * 1000)
+  const reset = headers.get('x-ratelimit-reset-tokens') ?? headers.get('x-ratelimit-reset-requests')
+  return reset ? parseDuration(reset) : undefined
+}
+
+/** "1m3.5s" → 63500, "450ms" → 450, "2s" → 2000; undefined if unparseable. */
+export function parseDuration(text: string): number | undefined {
+  const parts = [...text.trim().matchAll(/(\d+(?:\.\d+)?)(ms|h|m|s)/g)]
+  if (parts.length === 0 || parts.map(p => p[0]).join('') !== text.trim()) return undefined
+  const unit = { h: 3_600_000, m: 60_000, s: 1000, ms: 1 } as const
+  return Math.ceil(parts.reduce((ms, [, n, u]) => ms + Number(n) * unit[u as keyof typeof unit], 0))
 }
 
 function parseCompletion(json: unknown, latencyMs: number): ModelResponse {

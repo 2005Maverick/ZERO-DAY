@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { rsi, sma, vwap } from './indicators'
+import { adx, rsi, sma, vwap } from './indicators'
 
 describe('sma', () => {
   it('averages the last n values', () => expect(sma([1, 2, 3, 4, 5], 3)).toBe(4))
@@ -42,4 +42,19 @@ describe('vwap', () => {
     expect(vwap(bars)).toBeCloseTo((10 * 100 + 20 * 300) / 400, 10)
   })
   it('is null with no volume', () => expect(vwap([])).toBeNull())
+})
+
+describe('adx (Wilder)', () => {
+  const trend = Array.from({ length: 40 }, (_, i) => ({ high: 101 + i, low: 99 + i, close: 100.5 + i }))
+  const chop = Array.from({ length: 40 }, (_, i) => (i % 2 ? { high: 102, low: 98, close: 101 } : { high: 101, low: 97, close: 99 }))
+
+  it('a steady trend reads strong; a back-and-forth market reads weak', () => {
+    expect(adx(trend)!).toBeGreaterThan(50)
+    expect(adx(chop)!).toBeLessThan(25)
+  })
+
+  it('needs 2 × period bars: null instead of a made-up value', () => {
+    expect(adx(trend.slice(0, 27))).toBeNull()
+    expect(adx(trend.slice(0, 28))).not.toBeNull()
+  })
 })
