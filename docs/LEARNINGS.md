@@ -952,3 +952,19 @@ Tests: 21 new (268 in total). The build passes, and a local production-server sm
 - Failed provider calls still cost quota. A pacer or budget that only counts successes undercounts.
 
 **Viva check:** why is reporting a reverted change worth a line in the thesis?
+
+---
+
+## [2026-10-03] P7 follow-up — ORUS help chat: raw markdown and an out-of-date product map
+
+**What happened:** in production, ORUS answered "how to use this" with literal `**` markers and a V1 tour: only COV-20, "3 retrieval-style coaching prompts", and no `/scenarios`, `/progress` or live coach.
+
+**Two causes:**
+- **The prompt said "plain text only", but gpt-oss writes markdown anyway,** and the widget printed text raw (`white-space: pre-wrap`). A prompt instruction about format is a request, not a guarantee, so the renderer should accept what the model actually produces.
+- **The system prompt hard-codes the product map,** so it went stale when V2 added routes. No test catches this.
+
+**Fix:**
+- The widget renders a safe markdown subset with `react-markdown`: bold, lists, inline code and links; headings are unwrapped and raw HTML is never rendered.
+- The prompt now describes V2 (4 scenarios, the coach pipeline, `/progress`) and says "never invent pages".
+
+**Lesson:** a hard-coded description of the app is documentation, and it rots the same way docs do. Update it whenever a route is added.
