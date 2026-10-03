@@ -62,7 +62,8 @@ export function monitorStep(step: MonitorStep, scenario: ScenarioDataset, earlie
   return null
 }
 
-const ENGINE = { reducer, initialState, tick: { type: 'TICK' } as Action }
+/** The engine, starting from the given scenario (M4: replays must use the session's own prices). */
+export const engineFor = (scenarioId: string) => ({ reducer, initialState: () => initialState(scenarioId), tick: { type: 'TICK' } as Action })
 
 /**
  * Every event in a session, from its journal alone. The server's re-check
@@ -71,7 +72,7 @@ const ENGINE = { reducer, initialState, tick: { type: 'TICK' } as Action }
  */
 export function monitorSession(entries: readonly JournalEntry<Action>[], scenario: ScenarioDataset): DetectedEvent[] {
   const events: DetectedEvent[] = []
-  for (const { entry, before, after } of replaySteps(ENGINE, entries)) {
+  for (const { entry, before, after } of replaySteps(engineFor(scenario.scenarioId), entries)) {
     const event = monitorStep({ entry, before, after, history: entries.slice(0, entry.seq) }, scenario, events)
     if (event) events.push(event)
   }

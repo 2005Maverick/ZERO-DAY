@@ -727,3 +727,244 @@ Tests: 21 new (268 in total). The build passes, and a local production-server sm
 **Open questions:**
 - An end-to-end test with a signed-in user on the deployed site.
 - Tag coach-initiated pauses (needs an `Action` change in your engine).
+
+---
+
+## [2026-10-03] 2.1 / 1.6 / P7 / P8 / 8.3 — Production fixes after the first live run
+
+**Authorship note:**
+- `panicSell` and `averagingDown`: specs and thresholds by Bhavya; implementations by Claude at Bhavya's request.
+- V1 route changes (ORUS code): by Claude at Bhavya's request.
+
+**What we built:**
+- Groq 429s now record *which* limit was hit and honour Groq's suggested wait.
+- CI runs all 275 tests.
+- The two remaining Monitor rules.
+- The V1 AI routes work again (new models) and require sign-in.
+- The README no longer claims real price data or ten scenarios.
+
+**Why this approach:**
+- The first production run (2026-10-02) showed Research failing with "All 1 Groq keys returned 429", and nothing more. We couldn't tell a per-minute token limit from a daily cap, because the transport threw away the body and headers.
+- Retrying blind after 0.25–2 s just burns a second 429 when Groq has said "wait 3 s".
+- **Rejected:** retrying for longer regardless. Research's whole budget is 9 s, so a wait longer than 4 s now fails fast instead of eating the Coach's time.
+
+**How it actually works:**
+- **429 path:**
+  - On a 429, `model.ts` keeps the error message (e.g. *"…tokens per minute (TPM): Limit 8000, Used 7000, Requested 2400"*) and the wait. The wait comes from `retry-after` (seconds) if present, else from `x-ratelimit-reset-tokens` (a duration like `1m3.5s`).
+  - `withRetry` waits exactly that (plus a little jitter) when it's at most `maxRetryAfterMs` (4 s), and otherwise rethrows at once.
+  - The message ends up in `agent_runs.error`, so the audit row now explains itself.
+- **panic_sell** fires on a SELL of a position that is all three of:
+  - ≥2% underwater against its average cost;
+  - ≥5% below the previous close (what the HUD shows as red);
+  - lower than 15 minutes earlier.
+
+  `lookbackMinutes` is the *actual* window, clamped at minute 0, so the summary's numbers always match the facts. That matters because the Coach's grounding check only allows numbers that appear in the facts.
+- **averaging_down** fires on a BUY into a position that is ≥2% underwater.
+- **gpt-oss on small budgets:** it's a reasoning model, and hidden reasoning tokens count against `max_tokens`. With a 40-token budget it spent all 40 thinking and returned `""` (`finish_reason: length`). `reasoning_effort: 'low'` + `include_reasoning: false` + 256 tokens of headroom fixes it (31 tokens, a real answer).
+
+**Gotchas:**
+- **Rule priority can hide a bug from end-to-end tests.** Mutation testing showed that deleting averaging_down's "BUY only" check survived: the spec's SELL fixture also triggered panic_sell, which outranks averaging_down, so `monitorSession` never showed the bug. Fixed with a test that calls each rule directly. **Lesson:** when a system picks one result by priority, test each candidate in isolation as well.
+- **CI ran no tests.** It only linted and built. A broken rule or replay would have deployed green.
+- **The V1 routes were silently down** in production since the key changed models. They return HTTP 200 with an error message as the "reply", so nothing alerted.
+- **Signed-out visitors lose help chat.** That's the price of protecting the quota (P8). An anonymous, IP-rate-limited chat would need shared state (8.4).
+
+**Viva check:**
+1. Why does honouring `retry-after` beat exponential backoff for a 429, and when should you give up instead of waiting?
+2. Your panic_sell rule has three conditions. Give a trade that meets two of them and explain why it shouldn't count.
+3. Why can a reasoning model return an empty answer, and how do you stop it?
+
+**Open questions:**
+- What caused the 2026-10-02 429 at ~3k tokens? The next production run will record the reason.
+- Which limit does Groq count, prompt + `max_tokens` or actual usage? This affects the budget design (ADR-008).
+
+---
+
+## [2026-10-03] 2.7 — The eval set, and what it actually showed
+
+**Authorship note:** design and code by Claude, under Bhavya's "complete all modules" instruction (ADR-010). Open to review.
+
+**What we built:**
+- `lib/eval/`:
+  - 15 fixed cases (`cases.ts`, tested);
+  - a 7-check rubric (`rubric.ts`, tested on the real production answer from 2026-10-02);
+  - a single-prompt baseline (`baseline.ts`);
+  - a token pacer (`pacing.ts`);
+  - a report builder (`report.ts`);
+  - a live runner (`npm run eval`).
+- Two runs are recorded in `docs/evidence/`.
+
+**Why this approach:**
+- An examiner's first question about a multi-agent system is "why not one good prompt?". That needs the same cases run through both designs and scored the same way.
+- Automatic checks are crude but every point can be explained. An LLM judge would add a second model's errors.
+
+**How it actually works:**
+- **Cases:**
+  - each case is a scripted journal;
+  - the decision under test is its last action;
+  - its label is what Monitor's rules say;
+  - its "truth" is the stock's real move on the day (for the direction check).
+- **The four systems:** A/B/T use Monitor's event. C gets the same raw facts and the pattern definitions, and must detect and coach in one strict-JSON call with the Coach's guardrails.
+- **Pacing:** the pacer waits *before* each agent run (never inside a model call, which would turn waiting into false timeouts) until the model's token window has room.
+
+**Gotchas:**
+- **My first run was unfair to the baseline.** Its grounding check only accepted numbers from the user message, but its pattern definitions ("2%", "5 orders") were in the system prompt. Two "failures" were the check's fault. Lesson: the evaluator must give each system credit for everything it was given.
+- **Strict JSON can fail on the provider's side** (`json_validate_failed`, once because hidden reasoning used up the tokens). It's an HTTP 400 with no output, so the runner gave up. It now counts as a failed attempt and retries, and Coach runs with `reasoning_effort: low`.
+- **Groq's real limit on qwen is 7,000 *input* tokens/minute.** We only learnt this because the 429 body is now kept (the 2026-10-03 fix). A ReAct agent re-sends its whole conversation every turn, so input tokens grow roughly with turns². One three-turn run can exceed the per-minute limit by itself.
+- **The rubric found a product bug:** templates gave no action. Fixing it makes T's 100% partly circular. Say so.
+
+**Results in one line:** detection 15/15 (pipeline) vs 13/15 (one prompt); rubric 99% / 98% / 89%. Research adds cost but no measurable rubric gain; on the free tier it succeeds about 75% of the time, and the fallback covers the rest.
+
+**Viva check:**
+1. What exactly does your eval show the multi-agent design is better at, and what doesn't it show?
+2. Why did the baseline score 63% in run 1 and 89% in run 2? What does that say about evaluating your own system?
+3. Why does a ReAct loop hit an input-tokens-per-minute limit faster than its total token count suggests?
+
+**Open questions:**
+- A human-rated or LLM-judged measure of context quality, to test whether Research helps.
+- Repeated runs (variance).
+- Cases on the new scenarios.
+
+---
+
+## [2026-10-03] 5.1–5.5 — Scoring: metrics, behaviour, baselines, scorecard, progression, study design
+
+**Authorship note:** by Claude at Bhavya's request. The study protocol (`docs/STUDY.md`) is a proposal for Bhavya to adopt or change.
+
+**What we built:**
+- `lib/scoring/`:
+  - financial metrics;
+  - behaviour metrics;
+  - baselines through the real engine;
+  - a scorecard computed by the server at session end and stored in `sessions.result`;
+  - progression across sessions.
+- `/progress` (dashboard) and `/progress/[id]` (audit timeline replay).
+- A study mode with a control group.
+
+**How it actually works:**
+- **Max drawdown:** the largest fall from a running peak, (peak − equity)/peak. It shows the worst loss you sat through, which the final return hides.
+- **Session Sharpe:** mean/std of per-minute equity returns × √n, with a risk-free rate of 0 for a single day. It's undefined when equity never moves. It is **not** annualised, so compare it only between sessions of the same scenario.
+- **Hold time:** FIFO lots (each sell closes the oldest buy first), weighted by quantity. The engine itself uses average cost; FIFO is only a reporting convention.
+- **Discipline score:** the share of accepted orders with no Monitor event. Deliberately simple.
+- **Baselines:** buy-and-hold, a "sell anything 3% under cost" rule, and cash. All run through the same reducer, so fills, prices and the square-off at the bell are identical; only the decisions differ.
+- **Replay to the bell:** TICKs aren't logged, so a session that reached the close is replayed with `untilMinute = sessionMinutes`. One ended with END stops where it ended.
+- **Progression:** the OLS slope of flagged-orders-per-10 over session number, plus first-half vs second-half means. It's descriptive only.
+- **Study mode** (`NEXT_PUBLIC_STUDY_MODE`): a hash of the user id assigns *coached* or *control*. Control users are still scored but see no coach. **Without a control group, improvement could just be practice.**
+
+**Gotchas:**
+- A scorecard needs the scenario's own engine. Replaying a TAX-19 log from `initialState()` would silently use COV-20 prices. Hence `engineFor(scenarioId)` everywhere.
+- The scorecard is computed from the log read through the **user's** RLS client, so the server can only score the caller's own session, even though the write uses the service role.
+
+**Viva check:**
+1. Why is a session Sharpe not comparable to a fund's Sharpe ratio?
+2. Why does the thesis claim need a control group, and how is assignment kept stable without a table?
+3. Your discipline score is 67. What does that number mean, exactly?
+
+**Open questions:**
+- The study itself (participants, consent screen).
+- Whether flagged-per-10 is the right primary outcome.
+
+---
+
+## [2026-10-03] M4 — Real daily bars, reconstructed intraday, three new scenarios
+
+**Authorship note:**
+- Scenario choice: Bhavya ("Mix").
+- Data pipeline, reconstruction, manifests and the engine/UI generalisation: Claude at Bhavya's request.
+- Edits to Bhavya's FSM and live UI are marked in the files.
+
+**What we built:**
+- `scripts/fetch-scenario-daily.mjs`: real daily bars from Yahoo, with provenance and split un-adjustment.
+- `lib/data/scenarios/reconstruct.ts`: a seeded intraday path.
+- The manifest format, with TAX-19, ELEC-24 and GME-21.
+- The `MarketSpec` and a scenario-aware engine and live UI.
+- `/scenarios`, the picker.
+- 51 QA tests.
+
+**How it actually works:**
+- **Un-adjusting prices:** Yahoo returns prices *adjusted* for later splits (GME 4:1 in 2022, so Yahoo says 86.88). Traders on 27 Jan 2021 saw $347.51. The script multiplies back by every split after the date and records the factor.
+- **The intraday path:**
+  - anchors at the real open (minute 0), close (last minute), high and low, with seeded times inside hint windows (e.g. after the 10:30 tax announcement);
+  - between anchors, a **Brownian bridge**: x_i = a + S_i − (i/n)(S_n − (b − a)). Cumulative noise S, pinned so each segment starts at a and ends at b;
+  - folded back inside (low, high), so only the anchors touch the extremes.
+- **Co-movement:** each stock's noise is ρ·(the index's move) + √(1−ρ²)·(its own). VIX gets ρ = −0.7.
+- **Result:** every daily number is real and the shape is plausible, which the tests check exactly.
+
+**Gotchas:**
+- **A gap-down crash opens at its high** (ELEC-24, NIFTY), so the high anchor is minute 0. The reconstruction handles open = high, close = low and similar cases explicitly.
+- **The validator flagged KOSS (+480%) as a possible bad print.** It was real. A heuristic validator needs a human decision; we left KOSS out.
+- **Free data has no history of 1-minute bars** (Yahoo: last 30 days only). This is the hard limit behind ADR-009.
+
+**Viva check:**
+1. Which numbers in TAX-19 are real, and which are reconstructed? How would a user know?
+2. Why must the reconstruction be deterministic?
+3. Why are split adjustments a trap for historical simulation?
+
+**Open questions:**
+- Re-anchoring COV-20.
+- Prep rooms for the new scenarios.
+- Simulating LULD halts on GME.
+
+---
+
+## [2026-10-03] 2.6 / 8.4 / P9 / 1.3 — Coach history, database rate limits, honest indicators, fewer Research turns
+
+**Authorship note:** by Claude at Bhavya's request. P9 edits Bhavya's prep-room UI, marked in the file.
+
+**What we built:**
+- **Coach history and bias taxonomy** (`lib/agents/coach/history.ts`).
+- **`consume_quota()`**, a migration plus `lib/db/quota.ts`, wired into `/api/pipeline` and all 7 ORUS routes.
+- **Wilder ADX** in `lib/indicators`. The prep room now uses it and Wilder RSI, showing "—" instead of invented values.
+- **A Research prompt change:** all tool calls in one turn, measured by `npm run eval:research`.
+
+**How it actually works:**
+- **Atomic quota:** `pg_advisory_xact_lock(hash(user:bucket))` serialises concurrent requests from one user, so two parallel calls can't both see "one left". The lock is released when the transaction ends.
+- **Why `security definer` is safe here:** the function uses `auth.uid()` (the caller), never a user id passed in. So it can only spend the caller's own quota, while still writing a table the caller can't touch directly.
+- **Fail open vs fail closed:** for a *cost* guard, failing open (allow when the check breaks) keeps the product up. For an *access* guard (auth), you fail closed.
+- **Wilder ADX:**
+  - smooth TR, +DM and −DM (seed = the sum of 14, then S − S/14 + x);
+  - DI = 100·DM/TR, DX = 100·|DI+ − DI−|/(DI+ + DI−);
+  - ADX = the mean of the first 14 DX values, then smoothed.
+  - It needs 28 bars; with fewer it returns null. The old version averaged unsmoothed DX and fell back to `20 + Math.random()·10`.
+
+**Gotchas:**
+- **Test the rule in isolation, not only through priority** (again): the history counts use Monitor's events, which are one per action by priority.
+- **CRLF line endings broke a scripted edit:** the repo has mixed line endings. Direct edits avoid it.
+
+**Viva check:**
+1. Why can't an in-memory rate limiter work on Vercel?
+2. What stops a user calling `consume_quota` to burn someone else's quota?
+3. Why did the "tools" for the Coach become inputs?
+
+**Open questions:** global (all-users) per-minute budgeting.
+
+---
+
+## [2026-10-03] 1.3 — A prompt "fix" that made things worse (reverted)
+
+**What happened:** to stay under Groq's 7k input-tokens/min, I changed Research's prompt to "request every tool in ONE turn, then submit". **Measured** on the 12 eval cases (`npm run eval:research`, `docs/evidence/research-turns-2026-10-03.md`): **5/12 ok, against 9/12 before.**
+- 3 runs: qwen attempted larger parallel calls and Groq rejected them as malformed (`tool_use_failed`).
+- 4 runs: hit a 429 at the start. The rejected calls had still used input tokens, and the pacer only counts tokens from *successful* calls, so it under-estimated the window.
+
+**Decision:** reverted to "at most 3 tool calls, then submit".
+
+**Lessons:**
+- A plausible prompt change is a hypothesis. Measure it on the same cases before keeping it.
+- Failed provider calls still cost quota. A pacer or budget that only counts successes undercounts.
+
+**Viva check:** why is reporting a reverted change worth a line in the thesis?
+
+---
+
+## [2026-10-03] P7 follow-up — ORUS help chat: raw markdown and an out-of-date product map
+
+**What happened:** in production, ORUS answered "how to use this" with literal `**` markers and a V1 tour: only COV-20, "3 retrieval-style coaching prompts", and no `/scenarios`, `/progress` or live coach.
+
+**Two causes:**
+- **The prompt said "plain text only", but gpt-oss writes markdown anyway,** and the widget printed text raw (`white-space: pre-wrap`). A prompt instruction about format is a request, not a guarantee, so the renderer should accept what the model actually produces.
+- **The system prompt hard-codes the product map,** so it went stale when V2 added routes. No test catches this.
+
+**Fix:**
+- The widget renders a safe markdown subset with `react-markdown`: bold, lists, inline code and links; headings are unwrapped and raw HTML is never rendered.
+- The prompt now describes V2 (4 scenarios, the coach pipeline, `/progress`) and says "never invent pages".
+
+**Lesson:** a hard-coded description of the app is documentation, and it rots the same way docs do. Update it whenever a route is added.

@@ -54,3 +54,44 @@ export function vwap(bars: readonly OhlcvBar[]): number | null {
   }
   return v > 0 ? pv / v : null
 }
+
+/**
+ * ADX, Wilder's Average Directional Index (Wilder 1978): trend STRENGTH, 0–100,
+ * regardless of direction (> 25 is usually read as a trend).
+ *   1. per bar: true range TR, +DM (up-move if it beats the down-move), −DM (vice versa)
+ *   2. Wilder-smooth TR, +DM, −DM over `period` (seed = sum of the first `period`,
+ *      then S = S − S/period + current)
+ *   3. +DI = 100·(+DM)/TR, −DI = 100·(−DM)/TR, DX = 100·|+DI − −DI| / (+DI + −DI)
+ *   4. ADX = mean of the first `period` DX values, then Wilder-smoothed.
+ * Needs 2·period bars; returns null with fewer (P9: the prep room used to show a random number).
+ */
+export function adx(bars: readonly { high: number; low: number; close: number }[], period = 14): number | null {
+  if (period <= 0 || bars.length < 2 * period) return null
+  const tr: number[] = [], plus: number[] = [], minus: number[] = []
+  for (let i = 1; i < bars.length; i++) {
+    const b = bars[i], p = bars[i - 1]
+    const up = b.high - p.high, down = p.low - b.low
+    plus.push(up > down && up > 0 ? up : 0)
+    minus.push(down > up && down > 0 ? down : 0)
+    tr.push(Math.max(b.high - b.low, Math.abs(b.high - p.close), Math.abs(b.low - p.close)))
+  }
+  const seed = (xs: number[]) => xs.slice(0, period).reduce((a, b) => a + b, 0)
+  let sTr = seed(tr), sPlus = seed(plus), sMinus = seed(minus)
+  const dx: number[] = []
+  const push = () => {
+    if (sTr === 0) { dx.push(0); return }
+    const pdi = (100 * sPlus) / sTr, mdi = (100 * sMinus) / sTr
+    dx.push(pdi + mdi === 0 ? 0 : (100 * Math.abs(pdi - mdi)) / (pdi + mdi))
+  }
+  push()
+  for (let i = period; i < tr.length; i++) {
+    sTr = sTr - sTr / period + tr[i]
+    sPlus = sPlus - sPlus / period + plus[i]
+    sMinus = sMinus - sMinus / period + minus[i]
+    push()
+  }
+  if (dx.length < period) return null
+  let value = dx.slice(0, period).reduce((a, b) => a + b, 0) / period
+  for (let i = period; i < dx.length; i++) value = (value * (period - 1) + dx[i]) / period
+  return value
+}

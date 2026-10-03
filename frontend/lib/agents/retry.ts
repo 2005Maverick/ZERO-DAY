@@ -11,7 +11,8 @@ export { backoffDelay, type RetryPolicy }
 // Written by Claude at Bhavya's request (2026-09-23).
 // ============================================================================
 
-export const DEFAULT_RETRY: RetryPolicy = { maxRetries: 2, baseDelayMs: 250, maxDelayMs: 2000 }
+// maxRetryAfterMs 4000: Research's whole budget is 9 s (budgets.ts), so a longer wait can't pay off.
+export const DEFAULT_RETRY: RetryPolicy = { maxRetries: 2, baseDelayMs: 250, maxDelayMs: 2000, maxRetryAfterMs: 4000 }
 
 /** Only failures that waiting can fix. A 400/404, a malformed tool call or an abort will fail the same way again. */
 export function isRetryable(err: unknown): boolean {
@@ -55,7 +56,12 @@ export function withRetry(
         return await caller(req)
       } catch (err) {
         if (!isRetryable(err) || retry >= policy.maxRetries || req.signal.aborted) throw err
-        const delayMs = backoffDelay(retry, policy, random)
+        // Honour the provider's "retry after": retrying sooner just burns another 429 (seen live, 2026-10-02).
+        const hint = (err as ModelCallError).retryAfterMs
+        if (hint !== undefined && policy.maxRetryAfterMs !== undefined && hint > policy.maxRetryAfterMs) throw err
+        const delayMs = hint !== undefined && policy.maxRetryAfterMs !== undefined
+          ? hint + backoffDelay(0, policy, random)   // small jitter on top, so parallel callers don't collide
+          : backoffDelay(retry, policy, random)
         hooks.onRetry?.({ retry: retry + 1, delayMs, error: err as ModelCallError })
         await wait(delayMs, req.signal)
       }

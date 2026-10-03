@@ -24,7 +24,7 @@ export function newEvents(journal: readonly JournalEntry<Action>[], processedSeq
 
 export type FeedbackSource =
   | { kind: 'server'; path: Exclude<PipelineResponse['path'], 'rejected'> }
-  | { kind: 'local'; reason: 'not_signed_in' | 'sync_failed' | 'sync_slow' | 'network' | 'server_error' | 'rejected' | 'not_synced' }
+  | { kind: 'local'; reason: 'not_signed_in' | 'sync_failed' | 'sync_slow' | 'network' | 'server_error' | 'rejected' | 'not_synced' | 'rate_limited' }
 
 export interface FeedbackResult { feedback: Feedback; source: FeedbackSource }
 
@@ -68,6 +68,7 @@ export async function requestFeedback(event: DetectedEvent, deps: FeedbackDeps):
       return local('network')
     }
     if (res.status === 409) { await deps.sleep(500); continue }   // stored rows not visible yet
+    if (res.status === 429) return local('rate_limited')            // 8.4: hourly coach limit reached
     if (!res.ok) return local('server_error')
     const body = await res.json() as PipelineResponse
     // 'rejected' = the server's Monitor disagrees with ours: a bug or a tampered client. Say so.
@@ -84,5 +85,7 @@ export function describeSource(source: FeedbackSource): string {
       : source.path === 'monitor_only' ? 'AI coach · market research unavailable'
       : 'Standard feedback · AI coach unavailable'
   }
-  return source.reason === 'not_signed_in' ? 'Standard feedback · sign in for the AI coach' : 'Standard feedback · AI coach unreachable'
+  return source.reason === 'not_signed_in' ? 'Standard feedback · sign in for the AI coach'
+    : source.reason === 'rate_limited' ? 'Standard feedback · AI coach limit reached for this hour'
+    : 'Standard feedback · AI coach unreachable'
 }

@@ -271,3 +271,153 @@ Template:
 - Throughput is still about one full pipeline per minute per user, enough for a demo or a small study but not for many concurrent users. (d) or (b) remain the levers if needed.
 - The pause changes the experience: the sim stops at a flagged decision until feedback arrives (≤12 s budget, ADR-002). That's the intended "teachable moment", and it must be described in the report.
 - Model choice per agent is still provisional until the 2.7 eval set.
+
+---
+
+## ADR-009 — Scenario data: real daily bars, reconstructed intraday; four scenarios
+**Status:** accepted
+**Date:** 2026-10-03 · **Roadmap:** M4 (4.1–4.6), 3.7, P9 · **Decided by:** Bhavya Talwar (Claude's recommendation)
+
+**Context:**
+- The proposal promises real historical OHLCV via tools. The audit found COV-20 is synthetic: one shared curve plus noise.
+- Probed 2026-10-03: free sources (Yahoo chart API, Stooq) serve **real daily** OHLC, including NSE (`^NSEI`, `RELIANCE.NS`). **Historical 1-minute data isn't free anywhere.** Yahoo answers *"1m data not available … must be within the last 30 days"*. Polygon's free tier is US-only and delayed.
+- The engine runs an intraday session (375 minutes), so it needs minute prices.
+
+**Options:**
+- (a) Real daily bars, with a reconstructed intraday path that exactly hits each real open, high, low and close, labelled "reconstructed".
+- (b) Daily-bar scenarios: fully real, but the sim becomes multi-day, which means a large engine change.
+- (c) Paid 1-minute data: the most faithful, but it costs money and Polygon likely lacks NSE.
+
+Scope options: all 9 remaining scenarios, 3 strong ones, or COV-20 only.
+
+**Choice: (a), with COV-20 plus 3 scenarios that have clean free data.** The other 6 are shown as "coming soon", each with its documented reason:
+- Lehman: LEH is delisted, so there's no free data;
+- Flash Crash 2010: a 36-minute event that daily bars can't show;
+- Crypto 2018: a 24/7 market with different rules.
+
+**Consequences:**
+- Every daily number an agent quotes (open, high, low, close, previous close, multi-day indicators) is real and traceable to a source file. Intraday shape is not: the report must say so, and the UI labels it.
+- Research's minute-level claims (e.g. "fell 1.2% in 15 minutes") are about the reconstruction. This needs a limitation section, and the eval set should keep claims about daily facts separate from claims about intraday shape.
+- COV-20 is re-anchored to the real 9 March 2020 NSE daily bars. Its intraday path stays reconstructed.
+- The reconstruction must be deterministic (seeded), so replay and the server re-check stay exact (ADR-003/005).
+
+---
+
+## ADR-010 — Evaluation: fixed cases, four systems, an automatic rubric
+**Status:** accepted; first results 2026-10-03
+**Date:** 2026-10-03 · **Roadmap:** 2.7, 1.7, 5.5, 6.1, 8.3 · **Decided by:** Claude, under Bhavya's "complete all modules" instruction (reviewable)
+
+**Context:**
+- The proposal claims a multi-agent pipeline beats V1's single prompts. The audit (Q3) warned that without a controlled comparison this is "an architecture choice, not a result".
+- Budget: Groq free tier, one key.
+
+**Options:**
+- (a) An LLM judge scores free-text answers. It adds its own errors and costs quota.
+- (b) Human rating. That's the best measure of quality, but needs raters and time.
+- (c) Automatic checks (regex, grounding matcher) on fixed cases. Transparent and cheap, but crude.
+
+**Choice: (c)**, leaving (a)/(b) as optional extensions.
+- **Cases:** 15 fixed decisions from scripted COV-20 sessions (2 per Monitor pattern + 3 harmless). They are *found* in the price data, and `cases.test.ts` asserts each still shows its intended pattern.
+- **Four systems:**
+  - **A**, the full pipeline;
+  - **B**, Monitor → Coach;
+  - **C**, one prompt that detects and coaches, given the same raw facts, definitions and guardrails;
+  - **T**, the deterministic templates.
+- **Rubric:** 7 checks: valid, grounded, no stop-loss advice, names the pattern, consistent with the stock's real direction, actionable, ends with a question.
+- **Pacing:** each Research run waits for an empty token window, so rate limits don't distort the comparison.
+
+**Results (run 2, after two fairness fixes; `docs/evidence/eval-2026-10-03.md`):**
+
+| System | Detection | Mean rubric | Median latency | Mean tokens |
+|---|---|---|---|---|
+| A pipeline | 15/15 | 99% | 2.7 s | 7.2k |
+| B no Research | 15/15 | 98% | 0.7 s | 0.7k |
+| C single prompt | 13/15 | 89% | 0.7 s | 1.2k |
+| T template | 15/15 | 100% (partly circular) | – | – |
+
+- **Run 1** (`eval-2026-10-03-run1.md`) showed C at 63% and detection 9/15. Two of its failures were my bug: C's grounding ignored its own definitions. Strict-JSON failures got no repair. Both were fixed before run 2. **Reporting both runs is part of the result.**
+
+**Consequences / findings:**
+- **The measured advantage of the architecture is detection reliability and determinism, not answer quality on these checks.** C missed a revenge trade and once produced invalid output. A, B and T detect by construction. The audit trail can show why each event fired.
+- **Research added no measurable rubric value** but cost about 10× the tokens and about 2 s. The rubric doesn't measure how rich the context is. A human or LLM-judge study of "does the feedback reflect the market situation" is the open measure.
+- **Free-tier reliability:** Research completed 9/12 in both runs. A follow-up prompt asking for all tools in one turn scored 5/12: qwen produced malformed parallel calls, and the rejected calls still used input tokens. It was reverted (`docs/evidence/research-turns-2026-10-03.md`). Groq enforces **7,000 input tokens/minute** on qwen, and a Research run whose model takes a third turn exceeds it on its own (re-sent conversation). The fallback ladder covered every failure (path `monitor_only`).
+- **The rubric found a real product bug:** 8/12 template answers gave no concrete action. Fixed. That's why T scoring 100% is partly circular.
+- **Labels are our definitions** (ADR-006). This measures agreement with them.
+
+---
+
+## ADR-011 — Multi-market engine; the scenario mix
+**Status:** accepted
+**Date:** 2026-10-03 · **Roadmap:** 4.1–4.6, 7.3 · **Decided by:** Bhavya Talwar ("Mix"), implementation by Claude at Bhavya's request
+
+**Context:**
+- ADR-009 chose COV-20 plus 3 scenarios with real daily data.
+- The engine and live UI assumed NSE everywhere:
+  - ₹ hardcoded about 50 times;
+  - the clock fixed at 9:15–15:30 IST in 18 places;
+  - a 375-minute session;
+  - COV-20's prices and circuits imported directly into the reducer.
+
+**Options:**
+- (a) Indian events only, so the engine barely changes.
+- (b) The proposal's US/UK events.
+- (c) A mix.
+
+**Choice: (c).** The scenarios:
+- **TAX-19:** the corporate-tax-cut rally, 20 Sep 2019, NSE. An *up* day, which tests the coach on rallies.
+- **ELEC-24:** the election-results crash, 4 Jun 2024, NSE.
+- **GME-21:** the GameStop squeeze, 27 Jan 2021, NYSE.
+
+**Engine changes:**
+- A `MarketSpec` per scenario: exchange, time zone, open time, session length, currency, locale.
+- The reducer reads prices, session length and circuits from `state.scenarioId`.
+- `initialState(scenarioId)`.
+- Every replay (Monitor, server re-check, scorecard) starts from the session's own scenario (`engineFor`).
+- The trading logic is unchanged. All 323 earlier tests pass, including the 150-session replay proof.
+
+**Consequences:**
+- **4 of 10 proposal scenarios are playable.** The other 6 are listed in the UI with reasons: delisted data (Lehman), an intraday-only event (Flash Crash), a different market model (crypto), and 3 cut for time.
+- **New-scenario headlines** are documented facts with times marked "approximate" where not minute-exact. The invented noise items are labelled "Illustrative". **Nothing invented is presented as history.**
+- **GME's single-stock volatility halts aren't simulated;** the manifest says so.
+- **Not built for the new scenarios:**
+  - a prep room (COV-20's dossiers are hand-written; new scenarios get a briefing instead);
+  - ORUS whispers.
+
+  The live tutorial's worked examples stay in ₹.
+- **COV-20 is not re-anchored to real data** (amends ADR-009). Its headlines quote the synthetic levels ("NIFTY opens at 10,524"). Re-anchoring would mean rewriting Bhavya's scenario text and re-deriving its circuit timing. It stays synthetic, and the scenario picker says so.
+- `ENGINE_VERSION` is now `v2.3`.
+
+---
+
+## ADR-012 — Rate limiting in the database; Coach history as input
+**Status:** accepted (the migration must be applied to Supabase)
+**Date:** 2026-10-03 · **Roadmap:** 8.4, 2.6 · **Decided by:** Claude, under Bhavya's "complete all modules" instruction (reviewable)
+
+**Context (8.4):**
+- The only guard on Groq spend was client-side coalescing. A signed-in user could script calls to `/api/pipeline` or the ORUS routes and exhaust the shared free tier.
+- Serverless instances share no memory, so an in-process counter would reset per instance.
+
+**Options:**
+- (a) An in-memory limiter. It breaks across instances.
+- (b) A hosted KV store (Upstash/Redis). That's a new service and a new secret.
+- (c) A Postgres function on the database we already have.
+
+**Choice: (c).** `consume_quota(bucket, max, window)`:
+- **Atomicity:** `security definer`, so it acts only for `auth.uid()`; an advisory lock per user and bucket makes it atomic.
+- **Table access:** RLS on with no policies, so the table can't be read or forged directly.
+- **Limits:** the pipeline gets 40 runs/hour per user; the V1 ORUS routes 60 calls/hour.
+- **Fails open** if the function is missing (e.g. the migration isn't applied yet), with a server warning. A broken limiter must not take the coach down.
+
+**Context (2.6):** the proposal lists "Coach tools: past decision history, bias taxonomy". ADR-001 made the Coach a single call with no tools.
+
+**Choice:** the server computes the same information and passes it as **input**:
+- how often this pattern was flagged earlier in the session and in the user's past scored sessions;
+- a bias taxonomy: each pattern → the behavioural-finance bias with its classic reference.
+
+The Coach is told to name repetition ("the third time today"). The numbers are in its input, so the grounding check allows them.
+
+**Consequences:**
+- One more migration to apply (`20261003090000_api_quota.sql`).
+- Per-user, not global: the free tier's per-minute limit is still shared by all users (ADR-008).
+- "Tools" for the Coach became inputs, which keeps it at one call (latency, ADR-002).
+- 2.2 "Monitor tools" is likewise met by the rule context (position, portfolio, clock, scenario). Monitor is deterministic and calls nothing.

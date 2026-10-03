@@ -8,7 +8,7 @@ import type { CompleteResult } from '@/lib/session/end-session'
 /** The slice of the Supabase query builder this uses (so tests can pass a fake). */
 export interface SessionsDb {
   from(table: 'sessions'): {
-    update(values: { status: 'completed'; ended_at: string }): {
+    update(values: { status: 'completed'; ended_at: string; result?: unknown }): {
       eq(col: string, v: string): {
         eq(col: string, v: string): {
           eq(col: string, v: string): {
@@ -20,9 +20,10 @@ export interface SessionsDb {
   }
 }
 
-export async function completeSession(db: SessionsDb, userId: string, sessionId: string, now = new Date()): Promise<CompleteResult> {
+/** `result`: the session's scorecard (5.3), computed by the server by replay; omitted if it couldn't be. */
+export async function completeSession(db: SessionsDb, userId: string, sessionId: string, now = new Date(), result?: unknown): Promise<CompleteResult> {
   const { data, error } = await db.from('sessions')
-    .update({ status: 'completed', ended_at: now.toISOString() })
+    .update({ status: 'completed', ended_at: now.toISOString(), ...(result !== undefined ? { result } : {}) })
     .eq('id', sessionId)
     .eq('user_id', userId)      // owner only
     .eq('status', 'active')     // ending twice, or ending an abandoned session, is a no-op

@@ -70,6 +70,7 @@ describe('requestFeedback', () => {
     ['network error', { responses: [new TypeError('Failed to fetch')] }, 'network'],
     ['server error', { responses: [Response.json({}, { status: 500 })] }, 'server_error'],
     ['server rejected the claim', { responses: [Response.json({ pipelineId: 'p', path: 'rejected', feedback: null, event: null, audited: true })] }, 'rejected'],
+    ['hourly limit reached (429)', { responses: [Response.json({ error: 'rate_limited' }, { status: 429 })] }, 'rate_limited'],
     ['never synced (409 ×4)', { responses: [409, 409, 409, 409].map(s => Response.json({}, { status: s })) }, 'not_synced'],
   ] as const)('%s → local template, with the reason', async (_, over, reason) => {
     const { d } = deps(over as Partial<FeedbackDeps> & { responses?: (Response | Error)[] })

@@ -26,6 +26,13 @@ describe('completeSession', () => {
     expect(calls.update).toEqual({ status: 'completed', ended_at: '2026-10-02T10:00:00.000Z' })
   })
 
+  it('stores the scorecard in result when one is given (5.4)', async () => {
+    const { db, calls } = fakeDb({ data: [{ id: SID }], error: null })
+    const now = new Date('2026-10-02T10:00:00Z')
+    await completeSession(db, A, SID, now, { version: 1 })
+    expect(calls.update).toEqual({ status: 'completed', ended_at: '2026-10-02T10:00:00.000Z', result: { version: 1 } })
+  })
+
   it('no matching row (not yours, not active, or unknown) → not_found', async () => {
     expect(await completeSession(fakeDb({ data: [], error: null }).db, A, SID)).toBe('not_found')
   })

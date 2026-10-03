@@ -1,7 +1,7 @@
 'use client'
 
 import { useMemo } from 'react'
-import { useLiveSession, fmtIST } from '@/lib/contexts/live-session-context'
+import { useLiveSession } from '@/lib/contexts/live-session-context'
 import type { IntradayBar } from '@/types/live'
 
 const SECTOR_COLOR: Record<string, string> = {
@@ -23,7 +23,7 @@ const BULL = '#00C853'   // terminal green
 const BEAR = '#FF1F1F'   // alert red
 
 export function LiveChart() {
-  const { state, getBars, ltp, prevClose, pctChange } = useLiveSession()
+  const { state, getBars, ltp, prevClose, pctChange, clock, market } = useLiveSession()
   const symbol = state.activeSymbol
   const accent = SECTOR_COLOR[SYMBOL_SECTOR[symbol] ?? 'airlines']
 
@@ -133,7 +133,7 @@ export function LiveChart() {
         </span>
         <div style={{ flex: 1 }}/>
         <span style={{ color: '#606060' }}>
-          PREV CLOSE <span style={{ color: '#E0E0E0' }}>₹{prevC.toFixed(2)}</span>
+          PREV CLOSE <span style={{ color: '#E0E0E0' }}>{market.currencySymbol}{prevC.toFixed(2)}</span>
         </span>
         <span style={{ color: '#606060' }}>
           DAY <span style={{ color: isDown ? BEAR : BULL, fontWeight: 700 }}>
@@ -161,7 +161,7 @@ export function LiveChart() {
             fontFamily: 'var(--font-fraunces), serif', fontStyle: 'italic',
             fontSize: '14px', color: '#606060',
           }}>
-            Pre-market · waiting for opening bell at 09:15 IST...
+            Pre-market · waiting for opening bell at {clock(0)} {market.tz}...
           </div>
         )}
       </div>
@@ -188,7 +188,7 @@ export function LiveChart() {
           }}>{tf}</button>
         ))}
         <div style={{ flex: 1 }}/>
-        <span style={{ color: '#606060' }}>{fmtIST(state.currentMinute)} IST · UTC+5:30</span>
+        <span style={{ color: '#606060' }}>{clock(state.currentMinute)} {market.tz}</span>
         <span style={{ color: '#303030' }}>·</span>
         <span style={{ color: '#606060' }}>%</span>
         <span style={{ color: '#303030' }}>·</span>
@@ -241,6 +241,7 @@ interface ChartProps {
 }
 
 function CandleCanvas({ bars, ma20, vwap, prevClose, symbol, lastPrice }: ChartProps) {
+  const { clock } = useLiveSession()
   const W = 1200
   const H = 480
   const PAD_L = 8
@@ -446,7 +447,7 @@ function CandleCanvas({ bars, ma20, vwap, prevClose, symbol, lastPrice }: ChartP
             textAnchor="middle"
             fontFamily="var(--font-jetbrains), monospace" fontSize="9"
             fill="#606060">
-            {fmtIST(slot * 5)}
+            {clock(slot * 5)}
           </text>
         )
       })}

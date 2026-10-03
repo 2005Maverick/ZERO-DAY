@@ -9,6 +9,7 @@
 [![Tailwind CSS](https://img.shields.io/badge/Tailwind-4.0-38B2AC?style=for-the-badge&logo=tailwind-css&logoColor=white)](https://tailwindcss.com/)
 [![Supabase](https://img.shields.io/badge/Supabase-Auth-3FCF8E?style=for-the-badge&logo=supabase&logoColor=white)](https://supabase.com/)
 [![License](https://img.shields.io/badge/License-MIT-red?style=for-the-badge)](LICENSE)
+[![CI](https://github.com/bhavyatalwar04/ZERO-DAY/actions/workflows/ci.yml/badge.svg)](https://github.com/bhavyatalwar04/ZERO-DAY/actions/workflows/ci.yml)
 
 <br />
 
@@ -16,7 +17,7 @@
 
 *What if you could trade the 2008 crash? The GameStop squeeze? The Bitcoin halving?*
 
-[🚀 Live Demo](#) · [📖 Documentation](#documentation) · [🐛 Report Bug](../../issues) · [✨ Request Feature](../../issues)
+[🚀 Live Demo](https://zerodaymarket.vercel.app) · [🐛 Report Bug](../../issues) · [✨ Request Feature](../../issues)
 
 <br />
 
@@ -35,7 +36,13 @@
 <td width="50%">
 
 ### 🎯 **Historical Scenarios**
-Relive 50+ iconic market events from the 2008 financial crisis to the GameStop short squeeze. Each scenario is meticulously recreated with real price data.
+Relive iconic market days without knowing the outcome. Four are playable:
+- **COV-20:** the 9 March 2020 NSE crash.
+- **TAX-19:** the corporate-tax-cut rally, 20 September 2019, NSE.
+- **ELEC-24:** the election-results shock, 4 June 2024, NSE.
+- **GME-21:** the GameStop squeeze, 27 January 2021, NYSE.
+
+The last three use **real daily prices** (open, high, low, close); the minute-by-minute path between them is reconstructed and labelled as such. COV-20's prices are a synthetic reconstruction. See `docs/DECISIONS.md` (ADR-009/011).
 
 </td>
 <td width="50%">
@@ -49,13 +56,13 @@ Experience the market as it happened. Watch candles form, news break, and prices
 <td width="50%">
 
 ### 🧠 **AI-Powered Insights**
-After each trade, receive personalized feedback on your decisions. Learn what worked, what didn't, and why.
+A three-stage agent pipeline watches your trades as you make them. **Monitor** (deterministic rules) spots a risky decision such as a panic sell, averaging down or revenge trading. **Research** (an LLM with tools, no chart images) gathers the market facts at that minute. **Coach** turns both into feedback whose numbers must come from those facts. Every decision is re-checked on the server and logged to an audit trail. See `docs/DECISIONS.md`.
 
 </td>
 <td width="50%">
 
 ### 🏆 **Competitive Leaderboards**
-Compete with traders worldwide. See how your decisions stack up against the best.
+See how your decisions stack up. The leaderboard currently lives in your browser (local only).
 
 </td>
 </tr>
@@ -108,10 +115,10 @@ Track your progress over time with detailed statistics, win rates, and personali
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/Zero-Day-Market-.git
+git clone https://github.com/bhavyatalwar04/ZERO-DAY.git
 
 # Navigate to project
-cd Zero-Day-Market-
+cd ZERO-DAY
 
 # Install dependencies
 cd frontend && npm install
@@ -149,7 +156,7 @@ Open [http://localhost:3000](http://localhost:3000) to see the magic ✨
 ## 📁 Project Structure
 
 ```
-Zero-Day-Market-/
+ZERO-DAY/
 ├── 📂 frontend/
 │   ├── 📂 app/
 │   │   ├── 📄 page.tsx                  # Cinematic splash page (landing)
@@ -225,7 +232,19 @@ Zero-Day-Market-/
 - [x] 📈 Performance Analytics & Telemetry Debrief
 - [x] 🎓 Trading Academy & 10+ Mini-Games
 - [x] 🤖 RL-based Content Recommender & Behavioral Tracer
+- [x] 🧩 V2: Monitor → Research → Coach agent pipeline, live in the simulator
+- [x] 🗄️ V2: Supabase session log, decision-audit trail, row-level security, Google sign-in
+- [x] 📚 V2: 3 more scenarios on real daily data · evaluation set (pipeline vs single prompt) · scoring, baselines & progression dashboard
+- [ ] 🔬 V2: the cross-session study (`docs/STUDY.md`)
 
+<br />
+
+## 👥 Team
+
+Built by a 2-person team:
+
+- **Bhavya Talwar** — Scenario data engine (deterministic OHLCV generation via mulberry32 PRNG), Live Trading Engine (state machine, order matching for MARKET/LIMIT/SL/SL-M), ORUS AI coaching system (Groq API integration, 4-key rotation fallback)
+- **Pranav Singh Puri** — Multi-screen UX design, AI benchmark evaluation (FinVQA-Chart across 15 Vision-Language Models)
 
 <br />
 
@@ -267,7 +286,7 @@ Distributed under the MIT License. See `LICENSE` for more information.
 
 <br />
 
-[![GitHub stars](https://img.shields.io/github/stars/yourusername/Zero-Day-Market-?style=social)](../../stargazers)
-[![GitHub forks](https://img.shields.io/github/forks/yourusername/Zero-Day-Market-?style=social)](../../network/members)
+[![GitHub stars](https://img.shields.io/github/stars/bhavyatalwar04/ZERO-DAY?style=social)](../../stargazers)
+[![GitHub forks](https://img.shields.io/github/forks/bhavyatalwar04/ZERO-DAY?style=social)](../../network/members)
 
 </div>

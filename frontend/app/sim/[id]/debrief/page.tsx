@@ -13,7 +13,7 @@ import type { ArchetypeCard, BehaviorProfile, DebriefResponse, Mistake, TraceEve
 type LoadState = 'loading' | 'no-data' | 'computing' | 'streaming' | 'ready' | 'fallback'
 
 export default function DebriefPage({ params }: { params: Promise<{ id: string }> }) {
-  const { id: _id } = use(params)
+  const { id } = use(params)
   const router = useRouter()
   const [loadState, setLoadState] = useState<LoadState>('loading')
   const [profile, setProfile] = useState<BehaviorProfile | null>(null)
@@ -61,7 +61,7 @@ export default function DebriefPage({ params }: { params: Promise<{ id: string }
       <FullScreenMessage
         title="No session data found"
         body="Start and complete a live session first. Your trade trace is captured automatically."
-        action={{ label: 'Go to Live Room', onClick: () => router.push(`/sim/COV-20/live`) }}
+        action={{ label: 'Go to Live Room', onClick: () => router.push(`/sim/${id}/live`) }}
       />
     )
   }
@@ -88,9 +88,9 @@ export default function DebriefPage({ params }: { params: Promise<{ id: string }
             fontFamily: 'var(--font-fraunces), serif',
             fontSize: '32px', fontWeight: 700, color: '#F0F0F0',
             letterSpacing: '-0.01em', lineHeight: 1.1,
-          }}>Debrief · <span style={{ fontStyle: 'italic', color: '#D4A04D' }}>COV-20</span></div>
+          }}>Debrief · <span style={{ fontStyle: 'italic', color: '#D4A04D' }}>{id}</span></div>
           <div style={{ display: 'flex', gap: '8px' }}>
-            <button onClick={() => router.push(`/sim/COV-20/live`)} style={topBtn}>
+            <button onClick={() => router.push(`/sim/${id}/live`)} style={topBtn}>
               <ArrowLeft size={12}/> New Session
             </button>
             <button onClick={() => location.reload()} style={topBtn}>

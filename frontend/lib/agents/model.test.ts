@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { createGroqCaller, scriptedModel, ModelCallError, type ModelRequest } from './model'
+import { createGroqCaller, scriptedModel, ModelCallError, groqWaitMs, parseDuration, type ModelRequest } from './model'
 
 // ─── Fake fetch ─────────────────────────────────────────────
 
@@ -91,6 +91,36 @@ describe('createGroqCaller', () => {
     const { impl } = fakeFetch([{ status: 429, body: '' }, { status: 429, body: '' }])
     await expect(createGroqCaller({ keys: ['k1', 'k2'], fetchImpl: impl })(req()))
       .rejects.toMatchObject({ kind: 'rate_limited' })
+  })
+
+  it('keeps the 429 reason and the provider wait, so the audit says which limit was hit', async () => {
+    const body = JSON.stringify({ error: { message: 'Rate limit reached for model `qwen` on tokens per minute (TPM): Limit 8000, Used 7000, Requested 2400.' } })
+    const impl = (async () => new Response(body, { status: 429, headers: { 'retry-after': '2.5' } })) as unknown as typeof fetch
+    const err = await createGroqCaller({ keys: ['k1'], fetchImpl: impl })(req()).catch(e => e as ModelCallError)
+    expect(err).toMatchObject({ kind: 'rate_limited', status: 429, retryAfterMs: 2500 })
+    expect(err.message).toMatch(/tokens per minute \(TPM\): Limit 8000/)
+    expect(err.message).toMatch(/retry after 2500 ms/)
+  })
+
+  it('reads the wait from x-ratelimit-reset-tokens when retry-after is missing', () => {
+    expect(groqWaitMs(new Headers({ 'x-ratelimit-reset-tokens': '1m3.5s' }))).toBe(63_500)
+    expect(groqWaitMs(new Headers({ 'x-ratelimit-reset-tokens': '450ms' }))).toBe(450)
+    expect(groqWaitMs(new Headers({ 'retry-after': '3', 'x-ratelimit-reset-tokens': '9s' }))).toBe(3000)
+    expect(groqWaitMs(new Headers())).toBeUndefined()
+    expect(parseDuration('soon')).toBeUndefined()
+    expect(parseDuration('2s junk')).toBeUndefined()
+  })
+
+  it('classifies json_validate_failed and sends reasoning_effort only when set', async () => {
+    const { impl, calls } = fakeFetch([
+      { status: 400, body: { error: { code: 'json_validate_failed', message: 'Failed to validate JSON' } } },
+      ok({ content: '{}' }),
+    ])
+    const call = createGroqCaller({ keys: ['k1'], fetchImpl: impl })
+    await expect(call(req({ reasoningEffort: 'low' }))).rejects.toMatchObject({ kind: 'json_validate_failed', status: 400 })
+    expect(calls[0].body.reasoning_effort).toBe('low')
+    await call(req())
+    expect(calls[1].body).not.toHaveProperty('reasoning_effort')
   })
 
   it('classifies a 400 tool_use_failed separately from other HTTP errors', async () => {
