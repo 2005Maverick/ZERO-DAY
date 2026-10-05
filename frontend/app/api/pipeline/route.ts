@@ -3,6 +3,7 @@ import { createAdminClient } from '@/lib/db/admin'
 import { recordPipelineRun } from '@/lib/db/audit'
 import { createGroqCaller, ModelCallError, type ModelCaller } from '@/lib/agents/model'
 import { withRetry } from '@/lib/agents/retry'
+import { consumeQuota, type RpcClient } from '@/lib/db/quota'
 import { PIPELINE_BUDGET } from '@/lib/agents/budgets'
 import { runResearch } from '@/lib/agents/research/research'
 import { runCoach } from '@/lib/agents/coach/coach'
@@ -40,6 +41,11 @@ export async function POST(req: Request) {
       if (error) return { error: error.message }
       return (data as { seq: number; sim_minute: number; action: Action }[])
         .map((r): JournalEntry<Action> => ({ seq: r.seq, simMinute: r.sim_minute, action: r.action }))
+    },
+    quota: () => consumeQuota(supabase as unknown as RpcClient, 'pipeline'),
+    async pastSessions() {
+      const { data } = await supabase.from('sessions').select('result').eq('status', 'completed').order('ended_at', { ascending: false }).limit(50)
+      return (data ?? []) as { result: unknown }[]
     },
     research: (input, ctx) => runResearch(input, { model, ctx }),
     coach: input => runCoach(input, { model }),

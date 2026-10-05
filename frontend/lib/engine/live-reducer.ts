@@ -3,24 +3,32 @@
 // by Claude at Bhavya's request) so it has no 'use client' boundary: the
 // server must be able to replay sessions through it (P1, ADR-005) and Monitor
 // (2.1) runs on both sides. Must stay pure: same state + action → same result.
+// Multi-scenario (M4, 2026-10-03, by Claude at Bhavya's request): prices, session
+// length and circuit breakers come from state.scenarioId's dataset; the trading
+// logic itself is unchanged.
 
 import type { LiveSessionState, Order, Position } from '@/types/live'
-import { COV20_TIMELINE } from '@/lib/data/scenarios/cov-20/timeline'
-import { COV20_CIRCUITS } from '@/lib/data/scenarios/cov-20/live-events'
+import { SCENARIOS, DEFAULT_SCENARIO } from './scenarios'
 
 // ─── Initial state ──────────────────────────────────────────
 
-export const STARTING_CASH = 100000
-export const SESSION_MINUTES = 375        // 9:15 → 15:30 IST
+export const STARTING_CASH = 100000       // in the scenario's currency (₹1,00,000 / $100,000)
+/** COV-20's session (9:15 → 15:30 IST). Other markets differ: use sessionMinutesOf(). */
+export const SESSION_MINUTES = 375
+/** COV-20's stocks. Other scenarios: symbolsOf(). */
 export const SYMBOLS = ['INDIGO', 'SUNPHARMA', 'RELIANCE', 'HDFCBANK', 'TITAN', 'TCS']
 
-export function initialState(): LiveSessionState {
+const scenarioOf = (id: string) => SCENARIOS[id] ?? SCENARIOS[DEFAULT_SCENARIO]
+export const sessionMinutesOf = (scenarioId: string) => scenarioOf(scenarioId).market.sessionMinutes
+export const symbolsOf = (scenarioId: string) => Object.keys(scenarioOf(scenarioId).dataset.timeline)
+
+export function initialState(scenarioId: string = DEFAULT_SCENARIO): LiveSessionState {
   return {
-    scenarioId: 'COV-20',
+    scenarioId,
     status: 'PRE_OPEN',
     currentMinute: 0,
     speed: 5,
-    activeSymbol: 'INDIGO',
+    activeSymbol: symbolsOf(scenarioId)[0],
     cash: STARTING_CASH,
     positions: {},
     orders: [],
@@ -51,15 +59,15 @@ export type Action =
 
 // ─── Helpers ────────────────────────────────────────────────
 
-export function getPriceAtMinute(symbol: string, minute: number): number {
-  const tl = COV20_TIMELINE[symbol]
+export function getPriceAtMinute(symbol: string, minute: number, scenarioId: string = DEFAULT_SCENARIO): number {
+  const tl = scenarioOf(scenarioId).dataset.timeline[symbol]
   if (!tl) return 0
   // Find the bar covering this minute
   const idx = Math.min(tl.bars.length - 1, Math.floor(minute / 5))
   return tl.bars[idx]?.close ?? tl.prevClose
 }
 
-function snapshotPositions(positions: Record<string, Position>, atMinute: number): {
+function snapshotPositions(positions: Record<string, Position>, atMinute: number, scenarioId: string): {
   totalValue: number; unrealised: number
 } {
   let totalValue = 0
@@ -67,7 +75,7 @@ function snapshotPositions(positions: Record<string, Position>, atMinute: number
   for (const sym in positions) {
     const p = positions[sym]
     if (!p.qty) continue
-    const ltp = getPriceAtMinute(sym, atMinute)
+    const ltp = getPriceAtMinute(sym, atMinute, scenarioId)
     totalValue += Math.abs(p.qty) * ltp
     unrealised += p.qty * (ltp - p.avgPrice)
   }
@@ -111,10 +119,11 @@ export function reducer(state: LiveSessionState, action: Action): LiveSessionSta
       if (state.status !== 'LIVE' && state.status !== 'HALTED') return state
 
       const next = state.currentMinute + 1
-      if (next >= SESSION_MINUTES) {
+      const sessionEnd = sessionMinutesOf(state.scenarioId)
+      if (next >= sessionEnd) {
         // Square off at close
-        const close = squareOffAtMinute(state, SESSION_MINUTES - 1)
-        return { ...close, currentMinute: SESSION_MINUTES, status: 'CLOSED' }
+        const close = squareOffAtMinute(state, sessionEnd - 1)
+        return { ...close, currentMinute: sessionEnd, status: 'CLOSED' }
       }
 
       let working: LiveSessionState = { ...state, currentMinute: next }
@@ -125,7 +134,7 @@ export function reducer(state: LiveSessionState, action: Action): LiveSessionSta
       }
 
       // Check new circuits — only fire if we\'re not already in one
-      for (const c of COV20_CIRCUITS) {
+      for (const c of scenarioOf(state.scenarioId).dataset.circuits) {
         if (c.fireAt === next && !working.currentHalt) {
           working = {
             ...working,
@@ -141,7 +150,7 @@ export function reducer(state: LiveSessionState, action: Action): LiveSessionSta
       }
 
       // Capture equity point every minute
-      const snap = snapshotPositions(working.positions, working.currentMinute)
+      const snap = snapshotPositions(working.positions, working.currentMinute, working.scenarioId)
       const equity = working.cash + snap.totalValue
       const last = working.equityCurve[working.equityCurve.length - 1]
       if (!last || working.currentMinute - last.minute >= 1) {
@@ -165,7 +174,7 @@ export function reducer(state: LiveSessionState, action: Action): LiveSessionSta
       }
       // Validate funds for BUY
       if (order.side === 'BUY') {
-        const refPrice = order.price ?? getPriceAtMinute(order.symbol, state.currentMinute)
+        const refPrice = order.price ?? getPriceAtMinute(order.symbol, state.currentMinute, state.scenarioId)
         const cost = order.quantity * refPrice
         if (cost > state.cash) {
           // Reject
@@ -222,7 +231,7 @@ function matchOrders(state: LiveSessionState): LiveSessionState {
   let realisedPnL = state.realisedPnL
   const orders = state.orders.map(o => {
     if (o.status !== 'PENDING') return o
-    const price = getPriceAtMinute(o.symbol, state.currentMinute)
+    const price = getPriceAtMinute(o.symbol, state.currentMinute, state.scenarioId)
     let fill = false
     let fillPrice = price
     if (o.type === 'MARKET') { fill = true }
@@ -280,7 +289,7 @@ function squareOffAtMinute(state: LiveSessionState, minute: number): LiveSession
   for (const sym in state.positions) {
     const p = state.positions[sym]
     if (!p.qty) continue
-    const ltp = getPriceAtMinute(sym, minute)
+    const ltp = getPriceAtMinute(sym, minute, state.scenarioId)
     const realised = (ltp - p.avgPrice) * p.qty
     realisedPnL += realised
     cash += p.qty * ltp

@@ -1,4 +1,6 @@
 import { NextResponse } from 'next/server'
+import { V1_MODEL_PARAMS, REASONING_HEADROOM } from '@/lib/ai/v1-model'
+import { requireUser } from '@/lib/auth/require-user'
 
 export const maxDuration = 30
 
@@ -20,6 +22,8 @@ RULES:
 Return ONLY the prose. No JSON wrapper.`
 
 export async function POST(req: Request): Promise<Response> {
+  const auth = await requireUser('v1-ai')   // P8 + 8.4: signed-in users only, within the hourly limit
+  if (auth instanceof Response) return auth
   try {
     const GROQ_KEYS = [
       process.env.GROQ_API_KEY_1,
@@ -58,13 +62,13 @@ Write 2-3 sentence applied analysis.`
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({
-            model: 'llama-3.1-8b-instant',
+            ...V1_MODEL_PARAMS,   // P7: was llama-3.1-8b-instant (not on the key)
             messages: [
               { role: 'system', content: SYSTEM_PROMPT },
               { role: 'user',   content: userPrompt },
             ],
             temperature: 0.4,
-            max_tokens: 180,
+            max_tokens: 180 + REASONING_HEADROOM,
             stream: false,
           }),
         })

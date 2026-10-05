@@ -1,7 +1,8 @@
 'use client'
 
 import { use, useState, useEffect } from 'react'
-import { useRouter } from 'next/navigation'
+import { useRouter, notFound } from 'next/navigation'
+import { SCENARIOS } from '@/lib/engine/scenarios'
 import { LiveSessionProvider, useLiveSession } from '@/lib/contexts/live-session-context'
 import { LiveHud } from '@/components/live/live-hud'
 import { LiveChart } from '@/components/live/live-chart'
@@ -17,9 +18,11 @@ import {
 } from '@/components/live/overlays'
 
 export default function LiveRoomPage({ params }: { params: Promise<{ id: string }> }) {
-  const { id: _id } = use(params)
+  const { id } = use(params)
+  // M4: the route picks the scenario. Unknown ids 404 instead of silently playing COV-20.
+  if (!SCENARIOS[id]) notFound()
   return (
-    <LiveSessionProvider>
+    <LiveSessionProvider scenarioId={id}>
       <TraceBridge />
       <LiveAgents />
       <LiveRoomShell />
@@ -44,7 +47,7 @@ function LiveRoomShell() {
 
   function handleExit() {
     if (state.status === 'CLOSED') {
-      router.push('/sim/COV-20/debrief')
+      router.push(`/sim/${state.scenarioId}/debrief`)
     } else {
       setExitConfirm(true)
     }
@@ -112,7 +115,7 @@ function LiveRoomShell() {
       {/* Reactive overlays */}
       <NewsDropOverlay/>
       <CircuitBreakerOverlay/>
-      <EndOfDayModal onContinue={() => router.push('/sim/COV-20/debrief')}/>
+      <EndOfDayModal onContinue={() => router.push(`/sim/${state.scenarioId}/debrief`)}/>
       <OrderTypeCoach open={orderCoach} onClose={() => setOrderCoach(false)}/>
       <SizingCoach open={sizingCoach} onClose={() => setSizingCoach(false)}/>
 

@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import type { DebriefRequest, DebriefResponse, MistakeId, Mistake } from '@/lib/behavior/types'
+import { V1_DEBRIEF_PARAMS, REASONING_HEADROOM } from '@/lib/ai/v1-model'
+import { requireUser } from '@/lib/auth/require-user'
 
 export const maxDuration = 30
 
@@ -73,6 +75,8 @@ CONSTRAINTS:
 - Output ONLY the JSON object. No code fences, no preamble.`
 
 export async function POST(req: NextRequest) {
+  const auth = await requireUser('v1-ai')   // P8 + 8.4: signed-in users only, within the hourly limit
+  if (auth instanceof Response) return auth
   const GROQ_KEYS = [
     process.env.GROQ_API_KEY_1,
     process.env.GROQ_API_KEY_2,
@@ -157,14 +161,14 @@ export async function POST(req: NextRequest) {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          model: 'llama-3.3-70b-versatile',
+          ...V1_DEBRIEF_PARAMS,   // P7: was llama-3.3-70b-versatile (not on the key)
           messages: [
             { role: 'system', content: SYSTEM_PROMPT },
             { role: 'user', content: userPrompt },
           ],
           response_format: { type: 'json_object' },
           temperature: 0.4,
-          max_tokens: 3000,
+          max_tokens: 3000 + REASONING_HEADROOM,
         }),
       })
 

@@ -2,13 +2,15 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { useLiveSession, fmtIST } from '@/lib/contexts/live-session-context'
+import { useLiveSession } from '@/lib/contexts/live-session-context'
 import { useSessionSync } from '@/lib/session/session-sync'
 import { newEvents, requestFeedback, describeSource, type FeedbackResult } from '@/lib/session/decision-coach'
 import { createCoalescer, type Coalescer } from '@/lib/agents/coalesce'
 import { SCENARIOS } from '@/lib/engine/scenarios'
 import { PATTERN_LABELS } from '@/lib/monitor/templates'
 import type { DetectedEvent } from '@/lib/monitor/monitor'
+import { createClient } from '@/lib/supabase/client'
+import { STUDY_MODE, studyCondition } from '@/lib/study/condition'
 
 // ============================================================================
 // The live room's agents (ADR-002/005/008): session sync + the decision coach.
@@ -33,6 +35,15 @@ export function LiveAgents() {
   const statusRef = useRef(state.status)
   useEffect(() => { syncRef.current = sync }, [sync])
   useEffect(() => { statusRef.current = state.status }, [state.status])
+
+  // 5.4 study mode: the control group plays without coach feedback (docs/STUDY.md).
+  const controlGroup = useRef(false)
+  useEffect(() => {
+    if (!STUDY_MODE) return
+    createClient().auth.getUser()
+      .then(({ data }: { data: { user: { id: string } | null } }) => { if (data.user) controlGroup.current = studyCondition(data.user.id) === 'control' })
+      .catch(() => {})
+  }, [])
 
   const processedSeq = useRef(-1)
   const pausedByCoach = useRef(false)
@@ -59,7 +70,7 @@ export function LiveAgents() {
     const events = newEvents(journal, processedSeq.current, scenario.dataset)
     processedSeq.current = last
     const event = events.at(-1)
-    if (!event) return
+    if (!event || controlGroup.current) return   // control: scored at session end, no feedback now
     if (statusRef.current === 'LIVE') {
       pausedByCoach.current = true
       dispatch({ type: 'PAUSE' })
@@ -88,6 +99,7 @@ const TONE = {
 } as const
 
 function CoachPanel({ card, onDismiss }: { card: Card | null; onDismiss: () => void }) {
+  const { clock, market } = useLiveSession()
   const feedback = card?.result?.feedback
   const tone = TONE[feedback?.severity ?? 'info']
   return (
@@ -116,7 +128,7 @@ function CoachPanel({ card, onDismiss }: { card: Card | null; onDismiss: () => v
             fontFamily: 'var(--font-inter), sans-serif', fontSize: '9px', fontWeight: 700,
             color: tone.color, letterSpacing: '0.22em', textTransform: 'uppercase', marginBottom: '8px',
           }}>
-            Coach · {PATTERN_LABELS[card.event.kind] ?? card.event.kind}{card.event.symbol ? ` · ${card.event.symbol}` : ''} · {fmtIST(card.event.simMinute)} IST
+            Coach · {PATTERN_LABELS[card.event.kind] ?? card.event.kind}{card.event.symbol ? ` · ${card.event.symbol}` : ''} · {clock(card.event.simMinute)} {market.tz}
           </div>
 
           {!feedback ? (

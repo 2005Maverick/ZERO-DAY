@@ -11,8 +11,10 @@ import { supabaseTransport } from './supabase-transport'
  * Bump when the reducer's behaviour changes: replaying an old log through a
  * newer engine can give different states (ADR-003). Stored on sessions.engine_version.
  * 'cov20.2' = deterministic order ids (ADR-005).
+ * 'v2.3' = multi-scenario engine: prices, session length and circuits per scenario (M4, ADR-011).
+ *   COV-20 replays are unchanged; the version records that new scenarios exist.
  */
-export const ENGINE_VERSION = 'cov20.2'
+export const ENGINE_VERSION = 'v2.3'
 
 /**
  * Sends the session journal to Supabase (3.3, ADR-005). Use inside LiveSessionProvider.

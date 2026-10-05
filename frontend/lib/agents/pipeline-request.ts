@@ -1,15 +1,16 @@
 import 'server-only'
 import { z } from 'zod'
 import type { LiveSessionState } from '@/types/live'
-import { reducer, initialState, type Action } from '@/lib/engine/live-reducer'
+import type { Action } from '@/lib/engine/live-reducer'
 import { SCENARIOS } from '@/lib/engine/scenarios'
 import type { JournalEntry } from '@/lib/session/journal'
 import { replaySteps, ReplayError } from '@/lib/session/replay'
-import { monitorSession } from '@/lib/monitor/monitor'
+import { engineFor, monitorSession } from '@/lib/monitor/monitor'
 import { runPipeline, type DecisionEvent, type PipelineBudget, type PipelineRun } from './pipeline'
 import type { AgentRun, ToolContext } from './types'
 import type { ResearchFindings, ResearchInput } from './research/research'
 import { coachTemplate, type CoachFeedback, type CoachRunInput } from './coach/coach'
+import { coachHistory } from './coach/history'
 import type { AuditInput } from '@/lib/db/audit'
 
 // ============================================================================
@@ -43,6 +44,10 @@ export interface PipelineRequestDeps {
   research(input: ResearchInput, ctx: Omit<ToolContext, 'signal'>): Promise<AgentRun<ResearchFindings>>
   coach(input: CoachRunInput): Promise<AgentRun<CoachFeedback>>
   record(input: AuditInput<ResearchFindings, CoachFeedback>): Promise<{ ok: true; id: string } | { ok: false; error: string }>
+  /** The caller's past sessions (RLS-scoped), for the Coach's history (2.6). Optional: absent = no past history. */
+  pastSessions?(): Promise<{ result: unknown }[]>
+  /** 8.4 per-user rate limit (consume_quota). Optional: absent = unlimited (tests). */
+  quota?(): Promise<'ok' | 'exceeded' | 'unavailable'>
   budget: PipelineBudget
   newId?: () => string
 }
@@ -80,7 +85,7 @@ export async function handlePipelineRequest(req: Request, deps: PipelineRequestD
   // Server replay (P1): the state the user saw when deciding, rebuilt from the log alone.
   let stateBefore: LiveSessionState | undefined
   try {
-    for (const step of replaySteps({ reducer, initialState, tick: { type: 'TICK' } as Action }, entries)) {
+    for (const step of replaySteps(engineFor(session.scenarioId), entries)) {
       if (step.entry.seq === actionSeq) stateBefore = step.before
     }
   } catch (err) {
@@ -94,11 +99,17 @@ export async function handlePipelineRequest(req: Request, deps: PipelineRequestD
   }
   const claimedEvent: DecisionEvent = { ...claimed, facts: {}, summary: '' }
 
+  // 8.4: the per-user limit, checked only now that the request is valid and about to spend tokens.
+  if ((await deps.quota?.()) === 'exceeded') return json({ error: 'rate_limited' }, 429)
+
   const run = await runPipeline<ResearchFindings, CoachFeedback, readonly JournalEntry<Action>[]>(claimedEvent, entries, {
     // Only events triggered by THIS action count: an older event can't be replayed for fresh feedback.
     detect: log => monitorSession(log, scenario.dataset).filter(e => e.actionSeq === actionSeq),
-    research: event => deps.research({ event, scenarioLabel: scenario.label }, ctx),
-    coach: ({ event, findings }) => deps.coach({ event, findings, scenarioLabel: scenario.label }),
+    research: event => deps.research({ event, scenarioLabel: scenario.label, market: scenario.market }, ctx),
+    coach: async ({ event, findings }) => deps.coach({
+      event, findings, scenarioLabel: scenario.label, market: scenario.market,
+      history: coachHistory(event.kind, actionSeq, monitorSession(entries, scenario.dataset), (await deps.pastSessions?.().catch(() => [])) ?? []),
+    }),
     template: coachTemplate,
     newId: deps.newId,
   }, deps.budget)

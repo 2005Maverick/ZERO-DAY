@@ -1,5 +1,6 @@
 import 'server-only'
 import { z } from 'zod'
+import { clockAt, NSE, type MarketSpec } from '@/lib/engine/markets'
 import type { AnyToolDef, ToolContext, ToolDef } from '../types'
 import { rsi, sma, vwap } from '@/lib/indicators/indicators'
 import { marketAt, type MarketView } from './market-view'
@@ -18,11 +19,9 @@ import { marketAt, type MarketView } from './market-view'
 const r2 = (n: number) => Math.round(n * 100) / 100
 const pctChange = (from: number, to: number) => (from === 0 ? 0 : r2(((to - from) / from) * 100))
 
-/** Session clock. COV-20 opens 09:15 IST; the scenario manifest (4.2) will carry this per scenario. */
-const OPEN_MINUTE_OF_DAY = 9 * 60 + 15
-export function clock(minute: number): string {
-  const t = OPEN_MINUTE_OF_DAY + Math.max(0, minute)
-  return `${String(Math.floor(t / 60)).padStart(2, '0')}:${String(t % 60).padStart(2, '0')}`
+/** Session clock in the scenario's local market time (M4: NSE 09:15 IST, NYSE 09:30 ET). Absent market = NSE. */
+export function clock(minute: number, market: MarketSpec = NSE): string {
+  return clockAt(Math.max(0, minute), market)
 }
 
 const view = (ctx: ToolContext): MarketView => marketAt(ctx.scenario, ctx.session.simMinute)
@@ -59,7 +58,7 @@ export const getPriceWindow: ToolDef<{ symbol: string; lookbackMinutes: number }
     const highs = [startPrice, price, ...inWindow.map(b => b.high)]
     const lows = [startPrice, price, ...inWindow.map(b => b.low)]
     return {
-      symbol: s, from: clock(start), to: clock(m.now),
+      symbol: s, from: clock(start, ctx.scenario.market), to: clock(m.now, ctx.scenario.market),
       startPrice: r2(startPrice), price: r2(price), changePct: pctChange(startPrice, price),
       high: r2(Math.max(...highs)), low: r2(Math.min(...lows)),
       prevClose: r2(m.prevClose(s)), vsPrevClosePct: pctChange(m.prevClose(s), price),
@@ -100,7 +99,7 @@ export const getIndicators: ToolDef<{ symbol: string }, z.infer<typeof Indicator
     const dayHigh = Math.max(price, ...done.map(b => b.high))
     const dayLow = Math.min(price, ...done.map(b => b.low))
     return {
-      symbol: s, at: clock(m.now), price: r2(price), barsAvailable: closes.length,
+      symbol: s, at: clock(m.now, ctx.scenario.market), price: r2(price), barsAvailable: closes.length,
       rsi14: r === null ? null : r2(r),
       sma20min: s20 === null ? null : r2(s20),
       sma60min: s60 === null ? null : r2(s60),
@@ -132,7 +131,7 @@ export const getNews: ToolDef<{ lookbackMinutes: number }, z.infer<typeof News>>
     return {
       // signal/noise classification and per-stock impacts are withheld: they are the scenario's answer key
       headlines: inWindow.slice(0, 8).map(n => ({
-        time: clock(n.fireAt), minutesAgo: m.now - n.fireAt, headline: n.headline,
+        time: clock(n.fireAt, ctx.scenario.market), minutesAgo: m.now - n.fireAt, headline: n.headline,
         source: n.source ?? 'unknown', severity: n.severity,
       })),
       totalInWindow: inWindow.length,
@@ -164,9 +163,9 @@ export const getMarket: ToolDef<{ lookbackMinutes: number }, z.infer<typeof Mark
       return [{ name, value: r2(last.value), vsPrevClosePct: r2(last.pctChange * 100), changeOverWindowPct: pctChange(first.value, last.value) }]
     })
     const halts = m.halts().map(h => ({
-      level: h.level, from: clock(h.startedAtMin), until: clock(h.endsAtMin), activeNow: m.now < h.endsAtMin,
+      level: h.level, from: clock(h.startedAtMin, ctx.scenario.market), until: clock(h.endsAtMin, ctx.scenario.market), activeNow: m.now < h.endsAtMin,
     }))
-    return { at: clock(m.now), indices, halts }
+    return { at: clock(m.now, ctx.scenario.market), indices, halts }
   },
 }
 
@@ -198,7 +197,7 @@ export const getPosition: ToolDef<{ symbol: string }, z.infer<typeof Position>> 
       // Stop prices are omitted on purpose: stop-losses never execute in this engine (AUDIT §1.4 #1, P2).
       openOrders: state.orders.filter(o => o.symbol === s && o.status === 'PENDING').map(o => ({
         side: o.side, type: o.type, quantity: o.quantity,
-        limitPrice: o.price ?? null, triggerPrice: o.triggerPrice ?? null, placedAt: clock(o.placedAtMin),
+        limitPrice: o.price ?? null, triggerPrice: o.triggerPrice ?? null, placedAt: clock(o.placedAtMin, ctx.scenario.market),
       })),
       cash: r2(state.cash), realisedPnLToday: r2(state.realisedPnL),
     }

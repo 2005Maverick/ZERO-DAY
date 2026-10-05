@@ -1,15 +1,17 @@
 'use client'
 
 import { createContext, useContext, useEffect, useReducer, useRef, useCallback, useMemo, type ReactNode } from 'react'
-import type { LiveSessionState } from '@/types/live'
-import { COV20_TIMELINE, COV20_INDICES } from '@/lib/data/scenarios/cov-20/timeline'
-import { COV20_NEWS_EVENTS, COV20_WHISPERS } from '@/lib/data/scenarios/cov-20/live-events'
+import type { IntradayBar, LiveSessionState, NewsEvent, OrusWhisper } from '@/types/live'
 import {
-  reducer, initialState, getPriceAtMinute, STARTING_CASH, SYMBOLS, type Action,
+  reducer, initialState, getPriceAtMinute, STARTING_CASH, type Action,
 } from '@/lib/engine/live-reducer'
+import { SCENARIOS, DEFAULT_SCENARIO, type ScenarioInfo } from '@/lib/engine/scenarios'
+import { clockAt, formatMoney, NSE, type MarketSpec } from '@/lib/engine/markets'
 import { withJournal, emptyJournal, type JournalEntry } from '@/lib/session/journal'
 
 // The engine itself lives in lib/engine/live-reducer.ts (no 'use client', so the server can replay it).
+// Multi-scenario (M4, 2026-10-03, by Claude at Bhavya's request): all data comes from the
+// session's scenario; `market`, `clock` and `money` replace the hardcoded ₹ / IST / 9:15.
 export { reducer, initialState, type Action }
 
 // ─── Context ────────────────────────────────────────────────
@@ -27,13 +29,20 @@ interface LiveSessionContextValue {
   positionsValue: number
   marginUsed: number
   // helpers
-  getBars: (symbol: string) => typeof COV20_TIMELINE[string]['bars']
+  getBars: (symbol: string) => IntradayBar[]
   getIndexLatest: (key: string) => { value: number; pctChange: number }
-  pendingNews: () => typeof COV20_NEWS_EVENTS
-  whisperForMinute: (minute: number) => (typeof COV20_WHISPERS)[number] | undefined
+  pendingNews: () => NewsEvent[]
+  whisperForMinute: (minute: number) => OrusWhisper | undefined
   symbols: string[]
   /** Every non-TICK action with the minute it was applied at (3.3): synced to session_actions. */
   journal: JournalEntry<Action>[]
+  // scenario (M4)
+  scenario: ScenarioInfo
+  market: MarketSpec
+  /** session minute → local market time "HH:MM" */
+  clock: (minute: number) => string
+  /** amount → "₹1,00,000" / "$100,000" */
+  money: (amount: number, decimals?: number) => string
 }
 
 const LiveSessionContext = createContext<LiveSessionContextValue | null>(null)
@@ -41,8 +50,10 @@ const LiveSessionContext = createContext<LiveSessionContextValue | null>(null)
 // Records each user action inside the reducer, so the logged minute is exact (ADR-005).
 const journaledReducer = withJournal(reducer)
 
-export function LiveSessionProvider({ children }: { children: ReactNode }) {
-  const [journaled, dispatch] = useReducer(journaledReducer, undefined, () => emptyJournal<LiveSessionState, Action>(initialState()))
+export function LiveSessionProvider({ children, scenarioId = DEFAULT_SCENARIO }: { children: ReactNode; scenarioId?: string }) {
+  const scenario = SCENARIOS[scenarioId] ?? SCENARIOS[DEFAULT_SCENARIO]
+  const { dataset, market } = scenario
+  const [journaled, dispatch] = useReducer(journaledReducer, dataset.scenarioId, id => emptyJournal<LiveSessionState, Action>(initialState(id)))
   const state = journaled.live
   const tickRef = useRef<NodeJS.Timeout | null>(null)
 
@@ -70,13 +81,14 @@ export function LiveSessionProvider({ children }: { children: ReactNode }) {
   }, [state.status, state.speed])
 
   // ─── Selectors ────────────────────────────────────────────
-  const ltp = useCallback((symbol: string) => getPriceAtMinute(symbol, state.currentMinute), [state.currentMinute])
-  const prevClose = useCallback((symbol: string) => COV20_TIMELINE[symbol]?.prevClose ?? 0, [])
+  const sid = state.scenarioId
+  const ltp = useCallback((symbol: string) => getPriceAtMinute(symbol, state.currentMinute, sid), [state.currentMinute, sid])
+  const prevClose = useCallback((symbol: string) => dataset.timeline[symbol]?.prevClose ?? 0, [dataset])
   const pctChange = useCallback((symbol: string) => {
-    const pc = COV20_TIMELINE[symbol]?.prevClose ?? 0
+    const pc = dataset.timeline[symbol]?.prevClose ?? 0
     if (pc === 0) return 0
-    return ((getPriceAtMinute(symbol, state.currentMinute) - pc) / pc) * 100
-  }, [state.currentMinute])
+    return ((getPriceAtMinute(symbol, state.currentMinute, sid) - pc) / pc) * 100
+  }, [state.currentMinute, dataset, sid])
 
   const positionsValue = useMemo(() => {
     let v = 0
@@ -96,32 +108,37 @@ export function LiveSessionProvider({ children }: { children: ReactNode }) {
   const dayPnLPct = (dayPnL / STARTING_CASH) * 100
 
   const getBars = useCallback((symbol: string) => {
-    return COV20_TIMELINE[symbol]?.bars ?? []
-  }, [])
+    return dataset.timeline[symbol]?.bars ?? []
+  }, [dataset])
 
   const getIndexLatest = useCallback((key: string) => {
-    const arr = COV20_INDICES[key] ?? []
+    const arr = dataset.indices?.[key] ?? []
     if (arr.length === 0) return { value: 0, pctChange: 0 }
     const idx = Math.min(arr.length - 1, Math.floor(state.currentMinute / 5))
     return { value: arr[idx].value, pctChange: arr[idx].pctChange * 100 }
-  }, [state.currentMinute])
+  }, [state.currentMinute, dataset])
 
   const pendingNews = useCallback(() => {
-    return COV20_NEWS_EVENTS.filter(n => n.fireAt <= state.currentMinute)
-  }, [state.currentMinute])
+    return dataset.news.filter(n => n.fireAt <= state.currentMinute)
+  }, [state.currentMinute, dataset])
 
   const whisperForMinute = useCallback((minute: number) => {
-    return COV20_WHISPERS.find(w => Math.abs(w.fireAt - minute) <= 1)
-  }, [])
+    return scenario.whispers.find(w => Math.abs(w.fireAt - minute) <= 1)
+  }, [scenario])
+
+  const symbols = useMemo(() => Object.keys(dataset.timeline), [dataset])
+  const clock = useCallback((minute: number) => clockAt(minute, market), [market])
+  const money = useCallback((amount: number, decimals = 0) => formatMoney(amount, market, decimals), [market])
 
   const value = useMemo<LiveSessionContextValue>(() => ({
     state, dispatch,
     ltp, prevClose, pctChange,
     totalEquity, dayPnL, dayPnLPct, positionsValue, marginUsed,
     getBars, getIndexLatest, pendingNews, whisperForMinute,
-    symbols: SYMBOLS,
+    symbols,
     journal: journaled.entries,
-  }), [state, journaled.entries, ltp, prevClose, pctChange, totalEquity, dayPnL, dayPnLPct, positionsValue, marginUsed, getBars, getIndexLatest, pendingNews, whisperForMinute])
+    scenario, market, clock, money,
+  }), [state, journaled.entries, ltp, prevClose, pctChange, totalEquity, dayPnL, dayPnLPct, positionsValue, marginUsed, getBars, getIndexLatest, pendingNews, whisperForMinute, symbols, scenario, market, clock, money])
 
   return <LiveSessionContext.Provider value={value}>{children}</LiveSessionContext.Provider>
 }
@@ -132,10 +149,7 @@ export function useLiveSession(): LiveSessionContextValue {
   return ctx
 }
 
-// Format minute since 9:15 → HH:MM IST
+/** COV-20 / NSE clock (minute since 9:15 → HH:MM). Inside the live room prefer useLiveSession().clock. */
 export function fmtIST(minute: number): string {
-  const totalMin = 9 * 60 + 15 + minute
-  const h = Math.floor(totalMin / 60)
-  const m = totalMin % 60
-  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`
+  return clockAt(minute, NSE)
 }

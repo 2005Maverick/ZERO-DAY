@@ -1,5 +1,6 @@
 import 'server-only'
 import { z } from 'zod'
+import type { MarketSpec } from '@/lib/engine/markets'
 import type { AgentRun, AgentSpec } from '../types'
 import type { DecisionEvent } from '../pipeline'
 import type { ModelCaller } from '../model'
@@ -25,6 +26,8 @@ export interface ResearchInput {
   event: DecisionEvent
   /** e.g. "Covid Day Zero: 9 March 2020, NSE (India)" */
   scenarioLabel: string
+  /** the scenario's market, for local clock times (M4); absent = NSE */
+  market?: MarketSpec
 }
 
 const TOOL_NAMES = RESEARCH_TOOLS.map(t => t.name) as [string, ...string[]]
@@ -38,10 +41,10 @@ export const ResearchFindings = z.object({
 })
 export type ResearchFindings = z.infer<typeof ResearchFindings>
 
-export function describeEvent({ event, scenarioLabel }: ResearchInput): string {
+export function describeEvent({ event, scenarioLabel, market }: ResearchInput): string {
   const facts = Object.entries(event.facts).map(([k, v]) => `- ${k}: ${v}`).join('\n')
   return [
-    `Scenario: ${scenarioLabel}. It is now ${clock(event.simMinute)} (session minute ${event.simMinute}).`,
+    `Scenario: ${scenarioLabel}. It is now ${clock(event.simMinute, market)} ${market?.tz ?? 'IST'} (session minute ${event.simMinute}).`,
     `Decision flagged by the monitor: ${event.kind}${event.symbol ? ` on ${event.symbol}` : ''}.`,
     `What happened: ${event.summary}`,
     `Facts:\n${facts}`,
@@ -69,7 +72,7 @@ export function researchSpec(model = RESEARCH_MODEL, symbols: readonly string[] 
       '- Every number you write must come from a tool result. Your submission is checked, and invented numbers are rejected.',
       '- The tools only show the market up to now. You cannot know what happens later; never speculate about it.',
       '- State facts only. Do not judge the decision or give advice: another agent does that.',
-      '- Use at most 3 tool calls, then submit.',
+      '- Use at most 3 tool calls, then submit.',   // a "one turn of parallel calls" variant was measured worse (5/12 vs 9/12, 2026-10-03): kept this
     ].join('\n'),
     buildUserMessage: describeEvent,
     tools: researchTools(symbols),
