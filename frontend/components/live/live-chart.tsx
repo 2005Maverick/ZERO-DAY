@@ -23,7 +23,7 @@ const BULL = '#00C853'   // terminal green
 const BEAR = '#FF1F1F'   // alert red
 
 export function LiveChart() {
-  const { state, getBars, ltp, prevClose, pctChange, clock, market } = useLiveSession()
+  const { state, getBars, ltp, prevClose, pctChange, clock, market, scenario } = useLiveSession()
   const symbol = state.activeSymbol
   const accent = SECTOR_COLOR[SYMBOL_SECTOR[symbol] ?? 'airlines']
 
@@ -92,9 +92,9 @@ export function LiveChart() {
           fontSize: '11px', color: '#606060',
           fontWeight: 500,
         }}>
-          {SYMBOL_NAME[symbol]}
+          {SYMBOL_NAME[symbol] ?? scenario.names[symbol] ?? symbol}
           <span style={{ margin: '0 6px', color: '#303030' }}>·</span>
-          NSE
+          {market.exchange}
           <span style={{ margin: '0 6px', color: '#303030' }}>·</span>
           INTRADAY · 5min
         </span>
@@ -123,7 +123,7 @@ export function LiveChart() {
         fontSize: '12px',
         flexShrink: 0,
       }}>
-        <span style={{ color: '#E0E0E0', fontWeight: 600 }}>{symbol} · NSE · 5</span>
+        <span style={{ color: '#E0E0E0', fontWeight: 600 }}>{symbol} · {market.exchange} · 5</span>
         <OhlcCell label="O" value={lastBarOpen} color={lastBarClose >= lastBarOpen ? BULL : BEAR}/>
         <OhlcCell label="H" value={lastBarHigh} color={BULL}/>
         <OhlcCell label="L" value={lastBarLow} color={BEAR}/>
