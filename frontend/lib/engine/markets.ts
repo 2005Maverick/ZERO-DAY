@@ -34,3 +34,9 @@ export function formatMoney(amount: number, market: MarketSpec = NSE, decimals =
   const sign = amount < 0 ? '−' : ''
   return `${sign}${market.currencySymbol}${Math.abs(amount).toLocaleString(market.locale, { minimumFractionDigits: decimals, maximumFractionDigits: decimals })}`
 }
+
+/** A P&L figure with an explicit sign, rounded to whole units: "+$1,234" / "−₹1,500". */
+export function signedMoney(amount: number, market: MarketSpec = NSE): string {
+  const rounded = Math.round(amount)
+  return `${rounded >= 0 ? '+' : ''}${formatMoney(rounded, market)}`
+}

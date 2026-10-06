@@ -177,7 +177,7 @@ function OrderTicket({ onShowOrderCoach, onShowSizingCoach }: { onShowOrderCoach
           borderRadius: '6px',
         }}>
           <div style={{ fontFamily: 'var(--font-fraunces), serif', fontWeight: 700, fontSize: '15px', color: '#E0E0E0' }}>
-            {symbol} · NSE
+            {symbol} · {market.exchange}
           </div>
           <div style={{ fontFamily: 'var(--font-jetbrains), monospace', fontSize: '11px', color: '#808080', marginTop: '2px' }}>
             LTP {market.currencySymbol}{last.toFixed(2)} · prev {market.currencySymbol}{prevClose(symbol).toFixed(2)}

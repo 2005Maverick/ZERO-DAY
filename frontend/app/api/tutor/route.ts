@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { V1_MODEL_PARAMS, REASONING_HEADROOM } from '@/lib/ai/v1-model'
 import { requireUser } from '@/lib/auth/require-user'
+import { resolveScenario, scenarioContext } from '@/lib/ai/scenario-prompt'
 
 export const maxDuration = 30
 
@@ -13,7 +14,7 @@ Given an artifact (a piece of stock data) and the actual numbers visible on scre
 RULES:
 - Cite the actual numbers visible (the user can see them).
 - Point out what is notable, surprising, or risky in this specific data.
-- Tie it to the scenario's stakes ("on a day like Cov-20 / pandemic eve / oil crash...").
+- Tie it to the stakes of the scenario named in the request (its date and what was known before the open).
 - Tone: clinical, tight, slightly amused. Like a Hugo Weaving / James Earl Jones voice.
 - Maximum 60 words. No headers, no bullet points, no markdown — just plain prose.
 - DO NOT explain the universal concept again (that's already shown above the AI block).
@@ -43,7 +44,8 @@ export async function POST(req: Request): Promise<Response> {
       contextData: Record<string, unknown>
     }
 
-    const userPrompt = `Scenario: ${body.scenarioId} (Covid Day Zero, March 9, 2020 pre-market)
+    const scenario = resolveScenario(body.scenarioId)
+    const userPrompt = `Scenario: ${scenarioContext(scenario)} (pre-market)
 Stock: ${body.stock}
 Artifact: ${body.artifact}
 Visible data on screen:
